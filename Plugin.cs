@@ -15,7 +15,7 @@ public class SaS2DevTools : BasePlugin
     private FileSystemWatcher _configWatcher;
     private Timer _debounceTimer;
 
-    // One cheat-set per player slot.  Config keys live in sections
+    // One cheat-set per player slot. Config keys live in sections
     // "Player 1" and "Player 2" so they stay neatly separated in the file.
     internal PlayerCheats Player1 { get; private set; }
     internal PlayerCheats Player2 { get; private set; }

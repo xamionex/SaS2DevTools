@@ -91,7 +91,7 @@ public static class LevelPatch
                 ((LevelSettings)__instance.player.menu.GetLevelByScreen(54)).Activate(10);
                 return false;
             default:
-                return true; // original switch handles Equipment–Bestiary
+                return true; // original switch handles Equipment/Bestiary
         }
     }
 
@@ -109,14 +109,14 @@ public static class LevelPatch
         for (var i = 0; i < codes.Count - 1; i++)
         {
             if (codes[i].opcode != OpCodes.Ldloc_0 ||
-                codes[i + 1].opcode != OpCodes.Ldc_I4_S || (int)(sbyte)codes[i + 1].operand != key) continue;
+                codes[i + 1].opcode != OpCodes.Ldc_I4_S || (sbyte)codes[i + 1].operand != key) continue;
             insertIndex = i;
             break;
         }
 
         if (insertIndex == -1)
         {
-            SaS2DevTools.Instance.Log.LogWarning($"Key {key} not found – {label} not inserted.");
+            SaS2DevTools.Instance.Log.LogWarning($"Key {key} not found, {label} not inserted.");
             return codes;
         }
 

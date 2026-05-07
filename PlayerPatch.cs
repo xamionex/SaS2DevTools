@@ -82,7 +82,7 @@ public static class PlayerPatch
             if (character.hp < maxHp) character.hp = maxHp;
         }
 
-        // prevHp == 0f on the very first frame – only act once we have a valid prior reading.
+        // prevHp == 0f on the very first frame, only act once we have a valid prior reading.
         if (cheats.Invulnerable.Value
             && prevHp > 0f
             && character.hp < prevHp
@@ -112,25 +112,21 @@ public static class PlayerPatch
         }
 
         // Infinite Jumps (+ fall damage cancellation)
-        if (cheats.InfJumps.Value)
-        {
-            // Pin the "last grounded Y" so Land() never sees a large fall distance
-            if (character.state == 1)
-                character.update.lastGroundedY = character.loc.Y;
+        if (!cheats.InfJumps.Value) return;
+        // Pin the "last grounded Y" so Land() never sees a large fall distance
+        if (character.state == 1)
+            character.update.lastGroundedY = character.loc.Y;
 
-            // Rising-edge air jump
-            var currJump = character.keys.keyJump;
-            if (JumpMethod    != null
-                && SetAnimMethod  != null
-                && character.state == 1
-                && currJump && !prevJump
-                && character.dyingFrame <= 0f
-                && character.leap is not { active: true }
-                && character.update.grappleFrame <= 0f)
-            {
-                JumpMethod.Invoke(character.update, null);
-                SetAnimMethod.Invoke(character.anim, FlyArgs);
-            }
-        }
+        // Rising-edge air jump
+        var currJump = character.keys.keyJump;
+        if (JumpMethod == null
+            || SetAnimMethod == null
+            || character.state != 1
+            || !currJump || prevJump
+            || !(character.dyingFrame <= 0f)
+            || character.leap is { active: true }
+            || !(character.update.grappleFrame <= 0f)) return;
+        JumpMethod.Invoke(character.update, null);
+        SetAnimMethod.Invoke(character.anim, FlyArgs);
     }
 }
