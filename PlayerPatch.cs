@@ -168,12 +168,12 @@ public static class PlayerPatch
         character.traj.Y = 0f;
         character.traj.X = 0f;
 
-        // Vertical: hold jump + look up/down
-        if (character.keys.keyJumpHold)
-            character.loc.Y += (character.keys.keyDown ? 1f : -1f) * speed * frameTime;
+        // Movement writing loc directly in the postfix runs AFTER the game's collision resolution, so walls can't push back on this position.
+        if (character.keys.keyUp)
+            character.loc.Y += -1f * speed * frameTime;
+        else if (character.keys.keyDown)
+            character.loc.Y += 1f * speed * frameTime;
 
-        // Horizontal: writing loc.X directly in the postfix runs AFTER the game's
-        // collision resolution, so walls can't push back on this position.
         if (character.keys.keyRightRun)
             character.loc.X += speed * frameTime;
         else if (character.keys.keyLeftRun)
