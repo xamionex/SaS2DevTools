@@ -5,7 +5,7 @@
         <AssemblyName>amione.SaS2DevTools</AssemblyName>
         <Product>SaS2DevTools</Product>
         <ProductDescription>Adds a in-game cheat menu to Salt and Sacrifice</ProductDescription>
-        <Version>1.0.3</Version>
+        <Version>1.0.4</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <RestoreAdditionalProjectSources>
@@ -94,8 +94,10 @@
     </Target>
 
     <Target Name="ZipProjectDirectory" AfterTargets="Build">
-        <Exec Command="cd $(RootNamespace)/plugins &amp;&amp; zip ../../$(RootNamespace).zip amione.SaS2DevTools.dll" Condition="'$(OS)' == 'Unix'"/>
-        <Exec Command="powershell -Command &quot;Compress-Archive -Path '$(ProjectDir)$(RootNamespace)\plugins\amione.SaS2DevTools.dll' -DestinationPath '$(ProjectDir)$(RootNamespace).zip' -Force&quot;" Condition="'$(OS)' == 'Windows_NT'"/>
+        <Exec Command="cd $(RootNamespace)/plugins &amp;&amp; rm -f ../../$(RootNamespace).zip &amp;&amp; zip ../../$(RootNamespace).zip amione.SaS2DevTools.dll"
+              Condition="'$(OS)' == 'Unix'" />
+        <Exec Command="powershell -Command &quot;Remove-Item -Force '$(ProjectDir)$(RootNamespace).zip' -ErrorAction SilentlyContinue; Compress-Archive -Path '$(ProjectDir)$(RootNamespace)\plugins\amione.SaS2DevTools.dll' -DestinationPath '$(ProjectDir)$(RootNamespace).zip'&quot;"
+              Condition="'$(OS)' == 'Windows_NT'" />
     </Target>
 
 

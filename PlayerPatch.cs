@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Common;
 using HarmonyLib;
 using ProjectMage.character;
 using ProjectMage.player;
+using ProjectMage.sfx;
 
 namespace SaS2DevTools;
 
@@ -15,6 +17,7 @@ public static class PlayerPatch
     private static readonly MethodInfo GetMaxStamMethod  = AccessTools.Method(typeof(PlayerStats), "GetMaxStamina");
     private static readonly MethodInfo GetMaxPoiseMethod = AccessTools.Method(typeof(PlayerStats), "GetMaxPoise");
     private static readonly MethodInfo SetAnimMethod     = AccessTools.Method(typeof(CharAnim),    "SetAnim", [typeof(string), typeof(bool), typeof(bool)]);
+    private static readonly MethodInfo PlaySndMethod     = AccessTools.Method(typeof(Sound),    "PlaySnd", [typeof(int), typeof(string), typeof(Vector2), typeof(bool), typeof(int)]);
 
     private static readonly object[] FalseArgs = [false];
     private static readonly object[] EmptyArgs = [];
@@ -124,10 +127,12 @@ public static class PlayerPatch
         if (cheats.NoFallDmg.Value && character.state == 1)
             character.update.lastGroundedY = character.loc.Y;
         
-        if (cheats.InfJumps.Value)
+        if (cheats.InfJumps.Value || cheats.IncreaseJumps.Value)
         {
             var currJump = character.keys.keyJump;
-
+            if (character.state != 1)
+                cheats.ExtraJumpsUsed = 0;
+            
             // Guard conditions:
             // state == 1             -> only while airborne
             // rising edge            -> one trigger per press, not every frame
@@ -137,8 +142,25 @@ public static class PlayerPatch
                 || !currJump || prevJump
                 || !(character.dyingFrame <= 0f)
                 || character.leap is { active: true }
-                || !(character.update.grappleFrame <= 0f)
+                || character.update.grappleFrame > 0f
                 || character.anim.animName == "walljump") return;
+            
+            // Determine if an extra jump is allowed
+            bool canExtraJump;
+            if (cheats.InfJumps.Value)
+                canExtraJump = true;
+            else
+                canExtraJump = cheats.ExtraJumpsUsed < cheats.ExtraJumps.Value;
+
+            if (!canExtraJump)
+                return;
+            
+            // Perform the extra jump
+            // only count when limited; InfJumps can skip counting
+            if (cheats.InfJumps.Value)
+                cheats.ExtraJumpsUsed = 0;
+            else cheats.ExtraJumpsUsed++;
+            
             // Set velocity directly instead of calling CharUpdate.Jump() to avoid:
             //   1. JumpDrop() zeroing both axes when keyDown is held over a passthrough tile (character looks down + presses jump -> drops instead of jumping upward).
             //   2. Jump() conditionally overwriting traj.X only when a run key is held, which is correct on the ground but would silently zero any wall-jump X momentum if neither run key is active.
@@ -150,6 +172,7 @@ public static class PlayerPatch
                 character.traj.X = -380f;
             // else: traj.X is intentionally left as-is, preserving momentum (e.g. the X velocity from a preceding wall jump).
 
+            if (cheats.PlayJumpSnd.Value) PlaySndMethod?.Invoke(null, [Sound.sfxIdx, "jump", character.loc, false, -1]);
             SetAnimMethod?.Invoke(character.anim, FlyArgs);
         }
     }

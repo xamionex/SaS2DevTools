@@ -56,6 +56,9 @@ public class LevelDevMenu : LevelBase
             new DevItem("TOGGLES", "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = (bool)v),
             new DevItem("TOGGLES", "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = (bool)v),
             new DevItem("TOGGLES", "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = (bool)v),
+            new DevItem("TOGGLES", "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = (bool)v),
+            new DevItem("TOGGLES", "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = (bool)v),
+            new DevItem("TOGGLES", "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = (int)v),
             new DevItem("TOGGLES", "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = (bool)v),
             new DevItem("TOGGLES", "NoClip",        () => cheats.NoClip.Value,    v => cheats.NoClip.Value    = (bool)v),
             new DevItem("TOGGLES", "NoClipSpeed",   () => cheats.NoClipSpeed.Value,    v => cheats.NoClipSpeed.Value    = (float)v),
@@ -100,6 +103,12 @@ public class LevelDevMenu : LevelBase
             {
                 long change = player.keys.keyRight ? 1000 : -1000;
                 item.LongValue += change;
+                PlaySelect();
+            }
+            if (item.IsInt)
+            {
+                int change = player.keys.keyRight ? 1 : -1;
+                item.IntValue += change;
                 PlaySelect();
             }
             if (item.IsFloat)
@@ -226,9 +235,11 @@ public class LevelDevMenu : LevelBase
         public readonly Action Action = action;
         public bool BoolValue { get => (bool)getter(); set => setter(value); }
         public long LongValue { get => (long)getter(); set => setter(value); }
+        public int IntValue { get => (int)getter(); set => setter(value); }
         public float FloatValue { get => (float)getter(); set => setter(value); }
         public bool IsToggle => getter?.Invoke() is bool;
         public bool IsLong => getter?.Invoke() is long;
+        public bool IsInt => getter?.Invoke() is int;
         public bool IsFloat => getter?.Invoke() is float;
         public bool IsAction => Action != null;
 
@@ -237,6 +248,7 @@ public class LevelDevMenu : LevelBase
             if (IsAction) return "[Activate]";
             if (IsToggle) return BoolValue ? "On" : "Off";
             if (IsLong) return LongValue.ToString("N0");
+            if (IsInt) return IntValue.ToString("N0");
             if (IsFloat) return FloatValue.ToString("F1");
             return "";
         }
