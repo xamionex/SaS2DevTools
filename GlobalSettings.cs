@@ -19,9 +19,14 @@ public class GlobalSettings
 
     /// Whether free-cam is currently active.
     public bool FreeCamActive;
-
     public bool ActivateFreecam;
-
+    public float LastActivateTime;
+    public float LastToggleHudTime;
+    public float LastSpeedDownTime;
+    public float LastSpeedUpTime;
+    public const float ThrottleInterval = 500f;
+    public const float SpeedThrottleInterval = 100f;
+    
     /// Current camera scroll position when free-cam is on (world-space center).
     public float CamOffsetX;
 

@@ -90,9 +90,15 @@ public static class CameraPatch
         var ks = GlobalInputMgr.ks;
         var ctrl = ks.IsKeyDown(Keys.LeftControl) || ks.IsKeyDown(Keys.RightControl);
         var alt = ks.IsKeyDown(Keys.LeftAlt) || ks.IsKeyDown(Keys.RightAlt);
+        var tickCount = Environment.TickCount;
 
         // Toggle free-cam with F5
-        if (KSingle(ks, Keys.F5) || global.ActivateFreecam) global.ToggleFreeCam();
+        if ((KSingle(ks, Keys.F5) || global.ActivateFreecam) && tickCount - global.LastActivateTime >= GlobalSettings.ThrottleInterval)
+        {
+            global.ToggleFreeCam();
+            global.LastActivateTime = tickCount;
+        }
+
         if (global.FreeCamActive)
         {
             // Pan with WASD
@@ -102,20 +108,32 @@ public static class CameraPatch
             if (KDown(ks, Keys.D)) global.CamOffsetX += global.CamSpeed;
 
             // Speed: Q slower, E faster
-            if (KDown(ks, Keys.Q)) global.CamSpeed = Math.Max(1f, global.CamSpeed - 0.5f);
-            if (KDown(ks, Keys.E)) global.CamSpeed += 0.5f;
+            if (KDown(ks, Keys.Q) && tickCount - global.LastSpeedDownTime >= GlobalSettings.SpeedThrottleInterval)
+            {
+                global.CamSpeed = Math.Max(1f, global.CamSpeed - 1f);
+                global.LastSpeedDownTime = tickCount;
+            }
+
+            if (KDown(ks, Keys.E) && tickCount - global.LastSpeedUpTime >= GlobalSettings.SpeedThrottleInterval)
+            {
+                global.CamSpeed += 1f;
+                global.LastSpeedUpTime = tickCount;
+            }
 
             // Zoom: F zoom in, R zoom out
-            var zoomStep = ctrl ? 0.1f :
-                alt ? 10f : 1f;
-            if (KDown(ks, Keys.F)) global.CamZoom = Math.Max(0.5f, global.CamZoom - zoomStep);
-            if (KDown(ks, Keys.R)) global.CamZoom += zoomStep;
+            var zoomStep = ctrl ? 0.1f : alt ? 10f : 1f;
+            if (KDown(ks, Keys.F))
+                global.CamZoom = Math.Max(0.5f, global.CamZoom - zoomStep);
+
+            if (KDown(ks, Keys.R))
+                global.CamZoom += zoomStep;
         }
 
         // HUD visibility toggle
-        if (KSingle(ks, Keys.F6))
+        if (KSingle(ks, Keys.F6) && tickCount - global.LastToggleHudTime >= GlobalSettings.ThrottleInterval)
         {
             global.ShowHud.Value = !global.ShowHud.Value;
+            global.LastToggleHudTime = tickCount;
         }
 
         // Monster-type visibility toggles
@@ -123,9 +141,6 @@ public static class CameraPatch
         for (var i = 0; i < monsterKeys.Length; i++)
             if (KSingle(ks, monsterKeys[i]))
                 global.ShowMonsterType[i].Value = !global.ShowMonsterType[i].Value;
-
-        // Reset camera to player (C)
-        if (global.FreeCamActive && KSingle(ks, Keys.C)) global.ResetCamToPlayer();
 
         // Controller
         // Only process if we have a valid gamepad index
@@ -136,9 +151,10 @@ public static class CameraPatch
         // Toggle free-cam with RSC + LSC (both sticks clicked)
         var rscPressed = gp.Buttons.RightStick == ButtonState.Pressed;
         var lscPressed = gp.Buttons.LeftStick == ButtonState.Pressed;
-        if (rscPressed && lscPressed && !_rscLscWasPressed)
+        if (rscPressed && lscPressed && !_rscLscWasPressed && tickCount - global.LastActivateTime >= GlobalSettings.ThrottleInterval)
         {
             global.ToggleFreeCam();
+            global.LastActivateTime = tickCount;
             _rscLscWasPressed = true;
         }
         else if (!rscPressed || !lscPressed)
@@ -157,20 +173,32 @@ public static class CameraPatch
         if (gp.DPad.Up == ButtonState.Pressed) global.CamOffsetY -= panSpeed;
         if (gp.DPad.Down == ButtonState.Pressed) global.CamOffsetY += panSpeed;
 
+        // Camera speed: bumpers
+        if (GpSingle(gp, g => g.Buttons.A == ButtonState.Pressed) && tickCount - global.LastSpeedDownTime >= GlobalSettings.SpeedThrottleInterval) 
+        {
+            global.CamSpeed = Math.Max(1f, global.CamSpeed - 1f);
+            global.LastSpeedDownTime = tickCount;
+        }
+        if (GpSingle(gp, g => g.Buttons.X == ButtonState.Pressed) && tickCount - global.LastSpeedUpTime >= GlobalSettings.SpeedThrottleInterval) 
+        {
+            global.CamSpeed = Math.Max(1f, global.CamSpeed + 1f);
+            global.LastSpeedUpTime = tickCount;
+        }
+
         // Camera zoom: triggers
         var zoomDelta = 0f;
-        if (gp.Triggers.Left > 0.3f) zoomDelta -= gp.Triggers.Left * 0.3f;
-        if (gp.Triggers.Right > 0.3f) zoomDelta += gp.Triggers.Right * 0.3f;
+        var zoomDeltaMulti = 0.3f;
+        if (GpSingle(gp, g => g.Buttons.Y == ButtonState.Pressed)) zoomDeltaMulti = 0.1f;
+        if (gp.Triggers.Left > 0.3f) zoomDelta -= gp.Triggers.Left * zoomDeltaMulti;
+        if (gp.Triggers.Right > 0.3f) zoomDelta += gp.Triggers.Right * zoomDeltaMulti;
         if (zoomDelta != 0f) global.CamZoom = Math.Max(1f, global.CamZoom + zoomDelta);
 
         // HUD visibility toggle (B)
-        if (GpSingle(gp, g => g.Buttons.B == ButtonState.Pressed))
+        if (GpSingle(gp, g => g.Buttons.B == ButtonState.Pressed) && tickCount - global.LastToggleHudTime >= GlobalSettings.ThrottleInterval)
         {
             global.ShowHud.Value = !global.ShowHud.Value;
+            global.LastToggleHudTime = tickCount;
         }
-
-        // Reset camera to player (Y)
-        if (GpSingle(gp, g => g.Buttons.Y == ButtonState.Pressed)) global.ResetCamToPlayer();
     }
 
     // SCROLL OVERRIDE, runs after CamMgr finishes its own scroll update
