@@ -1,7 +1,7 @@
 using System.IO;
 using System.Timers;
 using BepInEx;
-using BepInEx.NetLauncher.Common;
+using BepInEx.NET.Common;
 using HarmonyLib;
 
 namespace SaS2DevTools;
@@ -17,10 +17,13 @@ public class SaS2DevTools : BasePlugin
 
     // One cheat-set per player slot. Config keys live in sections
     // "Player 1" and "Player 2" so they stay neatly separated in the file.
-    internal PlayerCheats Player1 { get; private set; }
-    internal PlayerCheats Player2 { get; private set; }
+    private PlayerCheats Player1 { get; set; }
+    private PlayerCheats Player2 { get; set; }
 
-    /// <summary>Returns the cheat-set for the given player ID (0 → P1, 1 → P2).</summary>
+    // Global (non-player) settings: camera, visibility, etc.
+    internal GlobalSettings Global { get; private set; }
+
+    /// <summary>Returns the cheat-set for the given player ID (0 is P1, 1 is P2).</summary>
     internal PlayerCheats GetCheats(int playerId) => playerId == 1 ? Player2 : Player1;
 
     public override void Load()
@@ -29,9 +32,10 @@ public class SaS2DevTools : BasePlugin
 
         Player1 = new PlayerCheats(Config, "Player 1");
         Player2 = new PlayerCheats(Config, "Player 2");
+        Global = new GlobalSettings(Config);
 
         var configDirectory = Path.GetDirectoryName(Config.ConfigFilePath);
-        var configFileName  = Path.GetFileName(Config.ConfigFilePath);
+        var configFileName = Path.GetFileName(Config.ConfigFilePath);
         if (!string.IsNullOrEmpty(configDirectory))
         {
             _configWatcher = new FileSystemWatcher(configDirectory, configFileName)
@@ -45,7 +49,11 @@ public class SaS2DevTools : BasePlugin
                 Config.Reload();
                 Log.LogInfo("Configuration reloaded.");
             };
-            _configWatcher.Changed += (_, _) => { _debounceTimer.Stop(); _debounceTimer.Start(); };
+            _configWatcher.Changed += (_, _) =>
+            {
+                _debounceTimer.Stop();
+                _debounceTimer.Start();
+            };
         }
 
         _harmony = new Harmony(PluginInfo.PluginGuid);

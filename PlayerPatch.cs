@@ -1,39 +1,45 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Bestiary.monsters;
 using Common;
 using HarmonyLib;
 using ProjectMage.character;
 using ProjectMage.player;
 using ProjectMage.sfx;
+using Skellingtons.character.def;
 
 namespace SaS2DevTools;
 
 [HarmonyPatch]
 public static class PlayerPatch
 {
-    private static readonly MethodInfo GetCharMethod     = AccessTools.Method(typeof(Player),      "GetCharacter");
-    private static readonly MethodInfo GetMaxHpMethod    = AccessTools.Method(typeof(PlayerStats), "GetMaxHP");
-    private static readonly MethodInfo GetMaxStamMethod  = AccessTools.Method(typeof(PlayerStats), "GetMaxStamina");
+    private static readonly MethodInfo GetCharMethod = AccessTools.Method(typeof(Player), "GetCharacter");
+    private static readonly MethodInfo GetMaxHpMethod = AccessTools.Method(typeof(PlayerStats), "GetMaxHP");
+    private static readonly MethodInfo GetMaxStamMethod = AccessTools.Method(typeof(PlayerStats), "GetMaxStamina");
     private static readonly MethodInfo GetMaxPoiseMethod = AccessTools.Method(typeof(PlayerStats), "GetMaxPoise");
-    private static readonly MethodInfo SetAnimMethod     = AccessTools.Method(typeof(CharAnim),    "SetAnim", [typeof(string), typeof(bool), typeof(bool)]);
-    private static readonly MethodInfo PlaySndMethod     = AccessTools.Method(typeof(Sound),    "PlaySnd", [typeof(int), typeof(string), typeof(Vector2), typeof(bool), typeof(int)]);
+
+    private static readonly MethodInfo SetAnimMethod =
+        AccessTools.Method(typeof(CharAnim), "SetAnim", [typeof(string), typeof(bool), typeof(bool)]);
+
+    private static readonly MethodInfo PlaySndMethod = AccessTools.Method(typeof(Sound), "PlaySnd",
+        [typeof(int), typeof(string), typeof(Vector2), typeof(bool), typeof(int)]);
 
     private static readonly object[] FalseArgs = [false];
     private static readonly object[] EmptyArgs = [];
-    private static readonly object[] FlyArgs   = ["fly",  false, true];
-    private static readonly object[] IdleArgs  = ["idle", false, true];
+    private static readonly object[] FlyArgs = ["fly", false, true];
+    private static readonly object[] IdleArgs = ["idle", false, true];
     private static bool _noClipRunning;
 
     /// Rising-edge detection for the jump key, keyed by player ID.
-    private static readonly Dictionary<int, bool>  PrevJumpKey = new();
+    private static readonly Dictionary<int, bool> PrevJumpKey = new();
 
     /// HP from the previous frame, keyed by character ID.
     /// Backstop for DoDeath direct assignments that bypass DealDamage.
     private static readonly Dictionary<int, float> PrevHp = new();
 
     private static bool _loggedError;
-    
+
     // __0 = frameTime, __1 = realTime  (PlayerMgr.Update signature)
     [HarmonyPatch(typeof(PlayerMgr), "Update", typeof(float), typeof(float))]
     [HarmonyPostfix]
@@ -52,13 +58,13 @@ public static class PlayerPatch
                 var cheats = SaS2DevTools.Instance?.GetCheats(player.ID);
                 if (cheats == null) continue;
 
-                PrevJumpKey.TryGetValue(player.ID,  out var prevJump);
-                PrevHp.TryGetValue(character.ID,    out var prevHp);
+                PrevJumpKey.TryGetValue(player.ID, out var prevJump);
+                PrevHp.TryGetValue(character.ID, out var prevHp);
 
                 ApplyCheats(player, character, cheats, prevJump, prevHp, __0);
 
                 PrevJumpKey[player.ID] = character.keys.keyJump;
-                PrevHp[character.ID]   = character.hp;
+                PrevHp[character.ID] = character.hp;
             }
         }
         catch (Exception ex)
@@ -70,11 +76,12 @@ public static class PlayerPatch
             }
         }
     }
-    
-    private static void ApplyCheats(Player player, Character character, PlayerCheats cheats, bool prevJump, float prevHp, float frameTime)
+
+    private static void ApplyCheats(Player player, Character character, PlayerCheats cheats, bool prevJump,
+        float prevHp, float frameTime)
     {
         if (player.stats == null) return;
-        
+
         if (cheats.Godmode.Value && GetMaxHpMethod != null)
         {
             var maxHp = (float)GetMaxHpMethod.Invoke(player.stats, FalseArgs);
@@ -126,13 +133,13 @@ public static class PlayerPatch
         // Pin the "last grounded Y" so Land() sees a fall distance of ~0.
         if (cheats.NoFallDmg.Value && character.state == 1)
             character.update.lastGroundedY = character.loc.Y;
-        
+
         if (cheats.InfJumps.Value || cheats.IncreaseJumps.Value)
         {
             var currJump = character.keys.keyJump;
             if (character.state != 1)
                 cheats.ExtraJumpsUsed = 0;
-            
+
             // Guard conditions:
             // state == 1             -> only while airborne
             // rising edge            -> one trigger per press, not every frame
@@ -144,7 +151,7 @@ public static class PlayerPatch
                 || character.leap is { active: true }
                 || character.update.grappleFrame > 0f
                 || character.anim.animName == "walljump") return;
-            
+
             // Determine if an extra jump is allowed
             bool canExtraJump;
             if (cheats.InfJumps.Value)
@@ -154,20 +161,20 @@ public static class PlayerPatch
 
             if (!canExtraJump)
                 return;
-            
+
             // Perform the extra jump
             // only count when limited; InfJumps can skip counting
             if (cheats.InfJumps.Value)
                 cheats.ExtraJumpsUsed = 0;
             else cheats.ExtraJumpsUsed++;
-            
+
             // Set velocity directly instead of calling CharUpdate.Jump() to avoid:
             //   1. JumpDrop() zeroing both axes when keyDown is held over a passthrough tile (character looks down + presses jump -> drops instead of jumping upward).
             //   2. Jump() conditionally overwriting traj.X only when a run key is held, which is correct on the ground but would silently zero any wall-jump X momentum if neither run key is active.
             character.traj.Y = -950f;
 
             if (character.keys.keyRightRun)
-                character.traj.X =  380f;
+                character.traj.X = 380f;
             else if (character.keys.keyLeftRun)
                 character.traj.X = -380f;
             // else: traj.X is intentionally left as-is, preserving momentum (e.g. the X velocity from a preceding wall jump).
@@ -176,7 +183,7 @@ public static class PlayerPatch
             SetAnimMethod?.Invoke(character.anim, FlyArgs);
         }
     }
-    
+
     private static void ApplyNoClip(Character character, float frameTime, PlayerCheats cheats)
     {
         var speed = cheats.NoClipSpeed.Value;
@@ -185,9 +192,9 @@ public static class PlayerPatch
 
         if (_noClipRunning)
             speed *= 2f;
-        
+
         // Freeze physics: airborne state with no velocity accumulation
-        character.state  = 1;
+        character.state = 1;
         character.traj.Y = 0f;
         character.traj.X = 0f;
 
@@ -203,9 +210,38 @@ public static class PlayerPatch
             character.loc.X -= speed * frameTime;
 
         // Force out of any grounded / hit animation; leave attack anims alone
-        if (character.anim.animName is "idle" or "run" or "walk" or "sprint" or "sprintrun" or "land" or "stagger" or "lhit" or "hit")
+        if (character.anim.animName is "idle" or "run" or "walk" or "sprint" or "sprintrun" or "land" or "stagger"
+            or "lhit" or "hit")
         {
             SetAnimMethod?.Invoke(character.anim, FlyArgs);
         }
+    }
+
+    [HarmonyPatch(typeof(CharUpdateState), "UpdateAirborneCharacter")]
+    [HarmonyPrefix]
+    // ReSharper disable once InconsistentNaming
+    private static void ScaleAirborneSpeed(CharUpdateState __instance, Vector2 pLoc, float frameTime, ref float speed,
+        CharDef charDef, MonsterDef monsterDef)
+    {
+        var c = __instance.c;
+        if (c?.playerIdx < 0 || c?.playerIdx >= PlayerMgr.player.Length) return;
+        var cheats = SaS2DevTools.Instance?.GetCheats(PlayerMgr.player[c.playerIdx].ID);
+        if (cheats == null) return;
+        speed *= cheats.MovementSpeedMult.Value;
+    }
+
+    [HarmonyPatch(typeof(CharUpdateState), "UpdateGroundedCharacter")]
+    [HarmonyPostfix]
+    // ReSharper disable once InconsistentNaming
+    private static void ScaleGroundedSpeed(CharUpdateState __instance)
+    {
+        var c = __instance.c;
+        if (c?.playerIdx < 0 || c?.playerIdx >= PlayerMgr.player.Length) return;
+        var player = PlayerMgr.player[c.playerIdx];
+        if (!player.isLocal) return;
+        var cheats = SaS2DevTools.Instance?.GetCheats(player.ID);
+        if (cheats == null || Math.Abs(cheats.MovementSpeedMult.Value - 1f) < 0.001f) return;
+        c.traj.X *= cheats.MovementSpeedMult.Value;
+        c.traj.Y *= cheats.MovementSpeedMult.Value;
     }
 }

@@ -27,14 +27,15 @@ public static class HitPatch
     // Zeroing poiseAtk prevents the poise-break branch (fling traj + stagger anim).
     // Zeroing bigHit prevents BigHit() from applying launch trajectories.
     // Clamping poise ensures we don't fire from pre-depleted poise either.
-    [HarmonyPatch(typeof(HitManager), "ProcessHit", typeof(Character), typeof(Character), typeof(Particle), typeof(Vector2), typeof(int), typeof(float), typeof(int))]
+    [HarmonyPatch(typeof(HitManager), "ProcessHit", typeof(Character), typeof(Character), typeof(Particle),
+        typeof(Vector2), typeof(int), typeof(float), typeof(int))]
     [HarmonyPrefix]
     public static void ProcessHit_Prefix(Character targ, ref int bigHit, ref float poiseAtk)
     {
         if (!HasCheat(targ, c => c.Unstaggerable.Value)) return;
 
         poiseAtk = 0f; // no poise damage: poise-break path never taken
-        bigHit   = 0;  // no BigHit launch trajectory
+        bigHit = 0; // no BigHit launch trajectory
 
         // If poise was already depleted by earlier hits, clamp it above zero so the poise <= 0f stagger check doesn't fire anyway
         if (targ.poise <= 0f) targ.poise = 1f;
