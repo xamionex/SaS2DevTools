@@ -135,6 +135,17 @@ public static class CameraPatch
             global.ShowHud.Value = !global.ShowHud.Value;
             global.LastToggleHudTime = tickCount;
         }
+        
+        if (KSingle(ks, Keys.F7) && tickCount - global.LastZoomOutTime >= GlobalSettings.NonfreecamZoomThrottleInterval)
+        {
+            global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - 0.05f);
+            global.LastZoomOutTime = tickCount;
+        }
+        if (KSingle(ks, Keys.F8) && tickCount - global.LastZoomInTime >= GlobalSettings.NonfreecamZoomThrottleInterval)
+        {
+            global.CamZoomNonFreecam.Value += 0.05f;
+            global.LastZoomInTime = tickCount;
+        }
 
         // Monster-type visibility toggles
         var monsterKeys = new[] { Keys.D0, Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7 };
@@ -160,6 +171,40 @@ public static class CameraPatch
         else if (!rscPressed || !lscPressed)
         {
             _rscLscWasPressed = false;
+        }
+        
+        // Non‑freecam zoom: RSC + LS L/R or DPAD L/R
+        if (rscPressed)
+        {
+            var stickX = gp.ThumbSticks.Left.X;
+            if (Math.Abs(stickX) > 0.3f)
+            {
+                switch (stickX)
+                {
+                    case < -0.3f when tickCount - global.LastZoomOutTime >= GlobalSettings.NonfreecamZoomThrottleInterval:
+                        global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - 0.05f);
+                        global.LastZoomOutTime = tickCount;
+                        break;
+                    case > 0.3f when tickCount - global.LastZoomInTime >= GlobalSettings.NonfreecamZoomThrottleInterval:
+                        global.CamZoomNonFreecam.Value += 0.05f;
+                        global.LastZoomInTime = tickCount;
+                        break;
+                }
+            }
+            
+            if (GpSingle(gp, g => g.DPad.Left == ButtonState.Pressed) && tickCount - global.LastZoomOutTime >=
+                GlobalSettings.NonfreecamZoomThrottleInterval)
+            {
+                global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - 0.05f);
+                global.LastZoomOutTime = tickCount;
+            }
+
+            if (GpSingle(gp, g => g.DPad.Right == ButtonState.Pressed) && tickCount - global.LastZoomInTime >=
+                GlobalSettings.NonfreecamZoomThrottleInterval)
+            {
+                global.CamZoomNonFreecam.Value += 0.05f;
+                global.LastZoomInTime = tickCount;
+            }
         }
 
         if (!global.FreeCamActive) return;

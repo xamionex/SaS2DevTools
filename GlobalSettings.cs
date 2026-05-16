@@ -24,8 +24,11 @@ public class GlobalSettings
     public float LastToggleHudTime;
     public float LastSpeedDownTime;
     public float LastSpeedUpTime;
+    public float LastZoomInTime;
+    public float LastZoomOutTime;
     public const float ThrottleInterval = 500f;
     public const float SpeedThrottleInterval = 100f;
+    public const float NonfreecamZoomThrottleInterval = 50f;
     
     /// Current camera scroll position when free-cam is on (world-space center).
     public float CamOffsetX;

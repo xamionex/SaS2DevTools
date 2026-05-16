@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Text;
+using Common;
 using HarmonyLib;
 using Menumancer.hud;
 using Menumancer.UIFormat;
@@ -10,210 +13,174 @@ using ProjectMage.gamestate;
 using ProjectMage.gamestate.mage;
 using ProjectMage.player;
 using ProjectMage.player.menu;
-using Color = Common.Color;
-using Rectangle = Common.Rectangle;
-using Vector2 = Common.Vector2;
 
 namespace SaS2DevTools;
 
 public class LevelDevMenu : LevelBase
 {
-    private List<DevItem> _items = [];
+    // Full sorted config list, doesn't change
+    private List<DevConfigEntry> _allConfigs;
+
+    // Configs for the currently active tab only
+    private List<DevConfigEntry> _displayedConfigs;
+
+    // Tab state
+    private List<string> _tabs;
+    private int _currentTabIndex;
+
     private int _selectedIndex;
     private float _scrollOffset;
     private readonly int _returnScreen;
+    private int _currentPlayerId;
     private bool _fast;
 
     // UI Constants
+    private const float TabBarHeight = 36f; // height of one tab row
+    private const float TabPadX = 18f; // horizontal text padding inside each tab
     private const float ItemHeight = 40f;
     private const float SectionHeight = 60f;
+    private const float TopMargin = 40f; // space above the tab bar
+    private const float BottomMargin = 40f; // space below the last item=
+
     private float _listX;
     private float _listY;
     private float _listWidth;
-    private const float ValueWidth = 220f;
+    private const float ValueWidth = 240f;
 
+    // Color Editing State
+    private int _colorCompIndex = -1; // -1 = none, 0=R, 1=G, 2=B, 3=A
+
+    // Dynamic sizing
+    private float _currentListVisibleHeight;
+
+    // 10 = LevelGameMenu, 25 = LevelMainMenu
     public LevelDevMenu(Player player, int returnToScreen = 10)
     {
         this.player = player;
         _returnScreen = returnToScreen;
-        Init("DevMenu", player);
+        Init("DevOptions", player);
     }
 
     public sealed override void Init(string strScreen, Player plr)
     {
         base.Init(strScreen, plr);
+        // Make this screen modal to block game input
         if (!screen.uiFlag.Contains(9)) screen.uiFlag.Add(9);
-        var cheats = SaS2DevTools.Instance?.GetCheats(plr.ID);
-        var global = SaS2DevTools.Instance?.Global;
-        if (cheats == null || global == null)
+        _currentPlayerId = plr.ID; // 0 = Player1, 1 = Player2
+
+        // Build config list from the active SaS2DevTools instance
+        _allConfigs = BuildDevConfigList();
+        _allConfigs = _allConfigs
+            .OrderBy(c => c.ModName)
+            .ThenBy(c => c.Order)
+            .ThenBy(c => c.DisplayName)
+            .ToList();
+
+        _tabs = _allConfigs
+            .GroupBy(c => c.ModName)
+            .OrderBy(g => g.Min(c => c.Order))
+            .Select(g => g.Key)
+            .ToList();
+        
+        _currentTabIndex = 0;
+        RefreshDisplayedConfigs();
+    }
+
+    private void RefreshDisplayedConfigs()
+    {
+        if (_tabs.Count == 0)
         {
-            SaS2DevTools.Instance?.Log.LogError($"Failed to get settings for player {plr.ID}");
-            _items = [];
+            _displayedConfigs = [];
             return;
         }
 
-        _items =
-        [
-            new DevItem("TOGGLES", "Godmode",
-                () => cheats.Godmode.Value,
-                v => cheats.Godmode.Value = (bool)v),
-            new DevItem("TOGGLES", "Invulnerable",
-                () => cheats.Invulnerable.Value,
-                v => cheats.Invulnerable.Value = (bool)v),
-            new DevItem("TOGGLES", "Infinite Stamina",
-                () => cheats.InfStamina.Value,
-                v => cheats.InfStamina.Value = (bool)v),
-            new DevItem("TOGGLES", "Infinite Poise",
-                () => cheats.InfPoise.Value,
-                v => cheats.InfPoise.Value = (bool)v),
-            new DevItem("TOGGLES", "Unstaggerable",
-                () => cheats.Unstaggerable.Value,
-                v => cheats.Unstaggerable.Value = (bool)v),
-            new DevItem("TOGGLES", "Infinite Jumps",
-                () => cheats.InfJumps.Value,
-                v => cheats.InfJumps.Value = (bool)v),
-            new DevItem("TOGGLES", "Play Jump Sound",
-                () => cheats.PlayJumpSnd.Value,
-                v => cheats.PlayJumpSnd.Value = (bool)v),
-            new DevItem("TOGGLES", "Increase Jump Amount",
-                () => cheats.IncreaseJumps.Value,
-                v => cheats.IncreaseJumps.Value = (bool)v),
-            new DevItem("TOGGLES", "Extra Jump Amount",
-                () => cheats.ExtraJumps.Value,
-                v => cheats.ExtraJumps.Value = (int)v),
-            new DevItem("TOGGLES", "No Fall Damage",
-                () => cheats.NoFallDmg.Value,
-                v => cheats.NoFallDmg.Value = (bool)v),
-            new DevItem("TOGGLES", "NoClip",
-                () => cheats.NoClip.Value,
-                v => cheats.NoClip.Value = (bool)v),
-            new DevItem("TOGGLES", "NoClipSpeed",
-                () => cheats.NoClipSpeed.Value,
-                v => cheats.NoClipSpeed.Value = (float)v),
-
-            new DevItem("STATS & ACTIONS", "Silver",
-                () => plr.stats.silver,
-                v => plr.stats.silver = (long)v),
-            new DevItem("STATS & ACTIONS", "XP",
-                () => plr.stats.xp,
-                v => plr.stats.xp = (long)v),
-            new DevItem("STATS & ACTIONS", "Teleport to Mage",
-                null,
-                null,
-                TeleportToMageArena),
-            new DevItem(
-                "STATS & ACTIONS", "Refill Health/Stam",
-                null,
-                null,
-                () =>
-                {
-                    var c = (Character)AccessTools.Method(typeof(Player), "GetCharacter").Invoke(plr, null);
-                    if (c == null) return;
-                    c.hp = 9999f;
-                    c.stamina = 9999f;
-                }),
-
-            // Toggling here is stupid
-            // Could make it work by changing the bool only when menu is closed, but I'm lazy
-            //new DevItem("CAMERA", "Free Camera (active)",
-            //    () => global.FreeCamActive,
-            //    v => global.ActivateFreecam = (bool)v),
-            
-            new DevItem("CAMERA", "Block Input in Freecam",
-                () => global.BlockInputInFreecam.Value,
-                v => global.BlockInputInFreecam.Value = (bool)v),
-            new DevItem("CAMERA", "Camera Speed (pixels/tick)",
-                () => global.CamSpeed,
-                v => global.CamSpeed = (float)v),
-            new DevItem("CAMERA", "Camera Zoom",
-                () => global.CamZoom,
-                v => global.CamZoom = (float)v),
-            new DevItem("CAMERA", "Camera Zoom Multiplier (Non-freecam)",
-                () => global.CamZoomNonFreecam.Value,
-                v => global.CamZoomNonFreecam.Value = (float)v),
-            // useless in menu
-            //new DevItem("CAMERA", "Reset camera to player",
-            //    null,
-            //    null,
-            //    global.ResetCamToPlayer),
-            new DevItem("CAMERA", "Save current speed/zoom as defaults",
-                null,
-                null,
-                global.SaveDefaults),
-
-            new DevItem("VISIBILITY", "Show HUD",
-                () => global.ShowHud.Value,
-                v => global.ShowHud.Value = (bool)v),
-            new DevItem("VISIBILITY", "Show Debug HUD",
-                () => global.ShowDebugHud.Value,
-                v => global.ShowDebugHud.Value = (bool)v),
-            new DevItem("VISIBILITY", "Show Player",
-                () => global.ShowPlayer.Value,
-                v => global.ShowPlayer.Value = (bool)v),
-        ];
-
-        // Add per monster type visibility toggles
-        for (var i = 0; i < GlobalSettings.MonsterTypeLabels.Length; i++)
-        {
-            var label = GlobalSettings.MonsterTypeLabels[i];
-            var idx = i; // capture for lambda
-            _items.Add(new DevItem("VISIBILITY", $"Show {label}",
-                () => global.ShowMonsterType[idx].Value,
-                v => global.ShowMonsterType[idx].Value = (bool)v));
-        }
+        var tab = _tabs[_currentTabIndex];
+        _displayedConfigs = _allConfigs.Where(c => c.ModName == tab).ToList();
+        _selectedIndex = 0;
+        _scrollOffset = 0f;
+        _colorCompIndex = -1;
+        _fast = false;
     }
+
+    private bool HasTabs => _tabs.Count > 1;
+
+    // Helper to get the correct ConfigEntryBase for the current player
+    private DevConfigEntry GetActiveEntry(DevConfigEntry cfg) => cfg;
+
+    // Helper to replace missing Math.Clamp in .NET Framework 4.5
+    private static int Clamp(int value, int min, int max) => Math.Max(min, Math.Min(max, value));
+    private static float Clamp(float value, float min, float max) => Math.Max(min, Math.Min(max, value));
 
     public override void Update(Character character, float frameTime)
     {
         if (!CanInput()) return;
+
+        // Tab navigation
+        if (HasTabs)
+        {
+            if (player.keys.keyCatLeft)
+            {
+                _currentTabIndex = (_currentTabIndex - 1 + _tabs.Count) % _tabs.Count;
+                RefreshDisplayedConfigs();
+                PlaySelect();
+                return;
+            }
+
+            if (player.keys.keyCatRight)
+            {
+                _currentTabIndex = (_currentTabIndex + 1) % _tabs.Count;
+                RefreshDisplayedConfigs();
+                PlaySelect();
+                return;
+            }
+        }
+
+        if (_displayedConfigs.Count == 0) return;
+
         if (player.keys.keyUp || player.keys.keyDown)
         {
             var dir = player.keys.keyUp ? -1 : 1;
-            _selectedIndex = (_selectedIndex + dir + _items.Count) % _items.Count;
+            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
             return;
         }
 
-        var item = _items[_selectedIndex];
-        if (player.keys.keyAccept && !item.IsAction && !item.IsBool)
+        var config = _displayedConfigs[_selectedIndex];
+        var activeEntry = GetActiveEntry(config);
+        var isColor = IsColorString(activeEntry);
+        var isBool = IsBool(activeEntry);
+        var valueChanged = false;
+
+        // Color Picker: Accept cycles R -> G -> B -> A -> Off
+        if (player.keys.keyAccept && isColor)
         {
-            _fast = !_fast;
+            _colorCompIndex++;
+            if (_colorCompIndex > 3) _colorCompIndex = -1;
             PlayAccept();
             return;
         }
 
-        if (!item.IsAction && (player.keys.keyLeft || player.keys.keyRight || (player.keys.keyAccept && item.IsBool)))
+        if (player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept)
         {
-            var right = player.keys.keyRight || (player.keys.keyAccept && item.IsBool);
-            if (item.IsBool)
-            {
-                item.BoolValue = !item.BoolValue;
-            }
-            else if (item.IsLong)
-            {
-                var change = right ? 1000 : -1000;
-                item.LongValue += change;
-            }
-            else if (item.IsInt)
-            {
-                var change = right ? 1 : -1;
-                item.IntValue += change;
-            }
-            else if (item.IsFloat)
-            {
-                var delta = _fast ? right ? 1f : -1f :
-                    right ? 0.1f : -0.1f;
-                item.FloatValue += delta;
-            }
+            var right = player.keys.keyRight;
+            if (isColor && _colorCompIndex != -1)
+                ModifyColorComponent(config, _colorCompIndex, right);
+            else
+                ModifyValue(config, right, _fast);
 
-            PlaySelect();
+            valueChanged = true;
+        }
+        else if (player.keys.keyAccept && !isColor && !config.IsAction)
+        {
+            _fast = !_fast;
         }
 
-        if (player.keys.keyAccept && item.IsAction)
+        if (valueChanged)
         {
-            item.Action?.Invoke();
-            PlayAccept();
+            SaS2DevTools.Instance.Config.Save();
+            PlaySelect();
         }
 
         if (player.keys.keyCancel)
@@ -224,57 +191,228 @@ public class LevelDevMenu : LevelBase
         }
     }
 
+    private static void ModifyValue(DevConfigEntry config, bool increase, bool fast = false)
+    {
+        var type = config.SettingType;
+
+        if (type == typeof(bool))
+        {
+            config.BoolValue = !config.BoolValue;
+        }
+        else if (type.IsEnum)
+        {
+            CycleEnum(config, increase);
+        }
+        else if (type == typeof(int))
+        {
+            config.IntValue += increase ? 1 : -1;
+        }
+        else if (type == typeof(float))
+        {
+            if (fast) config.FloatValue += increase ? 0.5f : -0.5f;
+            else config.FloatValue += increase ? 0.05f : -0.05f;
+        }
+        else if (type == typeof(string))
+        {
+            // Cycle through the registered acceptable values list (if provided).
+            // Color strings (4-part comma format) are handled separately via the
+            // color picker and never reach this branch.
+            var acceptable = config.AcceptableValues;
+            if (acceptable == null || acceptable.Length == 0) return;
+
+            var current = (string)config.BoxedValue ?? "";
+            var idx = Array.IndexOf(acceptable, current);
+
+            // If the stored value isn't in the list, snap to the first item
+            if (idx < 0) idx = 0;
+            else
+                idx = increase
+                    ? (idx + 1) % acceptable.Length
+                    : (idx - 1 + acceptable.Length) % acceptable.Length;
+
+            config.StringValue = acceptable[idx];
+        }
+    }
+
+    private static void ModifyColorComponent(DevConfigEntry config, int comp, bool inc)
+    {
+        var parts = ((string)config.BoxedValue).Split(',');
+        if (parts.Length != 4) return;
+
+        if (comp < 3) // RGB channels (0-255)
+        {
+            if (int.TryParse(parts[comp], out var v))
+            {
+                v = Clamp(inc ? v + 5 : v - 5, 0, 255);
+                parts[comp] = v.ToString();
+            }
+        }
+        else // Alpha channel (0.0-1.0)
+        {
+            if (float.TryParse(parts[comp], NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+            {
+                v = (float)Math.Round(Clamp(inc ? v + 0.05f : v - 0.05f, 0f, 1f), 2);
+                parts[comp] = v.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
+        config.BoxedValue = string.Join(",", parts);
+    }
+
+    private static void CycleEnum(DevConfigEntry entry, bool forward)
+    {
+        var values = Enum.GetValues(entry.SettingType);
+        var index = Array.IndexOf(values, entry.BoxedValue);
+        index = forward
+            ? (index + 1) % values.Length
+            : (index - 1 + values.Length) % values.Length;
+        entry.BoxedValue = values.GetValue(index);
+    }
+
+    private static bool IsColorString(DevConfigEntry entry) =>
+        entry.SettingType == typeof(string) && ((string)entry.BoxedValue)?.Split(',').Length == 4;
+
+    private static bool IsBool(DevConfigEntry entry) => entry.SettingType == typeof(bool);
+
+    /// Calculates tab rows that fit inside boxWidth, and returns total height used.
+    /// Also draws the tabs if draw == true.
+    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw)
+    {
+        if (!HasTabs) return 0f;
+
+        var tabY = boxY + 6f;
+        var tabH = TabBarHeight - 6f;
+
+        // Pre‑measure each tab width
+        var tabWidths = new float[_tabs.Count];
+        for (var t = 0; t < _tabs.Count; t++)
+            tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f, player, 1) + TabPadX * 2f;
+
+        // Build rows
+        var rows = new List<List<int>>(); // list of tab indices per row
+        var currentRow = new List<int>();
+        var currentRowWidth = 0f;
+        const float tabGap = 2f;
+
+        for (var t = 0; t < _tabs.Count; t++)
+        {
+            var w = tabWidths[t];
+            if (currentRow.Count > 0 && currentRowWidth + w + tabGap > boxWidth)
+            {
+                rows.Add(currentRow);
+                currentRow = [];
+                currentRowWidth = 0f;
+            }
+
+            currentRow.Add(t);
+            currentRowWidth += w + (currentRow.Count > 1 ? tabGap : 0f);
+        }
+
+        if (currentRow.Count > 0) rows.Add(currentRow);
+
+        var totalTabHeight = rows.Count * TabBarHeight;
+
+        if (!draw) return totalTabHeight;
+
+        // Draw each row, centered
+        for (var r = 0; r < rows.Count; r++)
+        {
+            var rowIndices = rows[r];
+            var rowTotalWidth = rowIndices.Sum(idx => tabWidths[idx]) + (rowIndices.Count - 1) * tabGap;
+            var startX = boxX + (boxWidth - rowTotalWidth) / 2f;
+            var curX = startX;
+            var rowY = tabY + r * TabBarHeight;
+
+            foreach (var idx in rowIndices)
+            {
+                var tw = tabWidths[idx];
+                var rect = new Rectangle((int)curX, (int)rowY, (int)tw, (int)tabH);
+
+                if (idx == _currentTabIndex)
+                {
+                    UIRender.DrawRect(rect, 0.35f, 3, 1f, 1f, UIRender.interfaceTex);
+                    Text.DrawText(new StringBuilder(_tabs[idx]),
+                        new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
+                        Color.Yellow, 0.65f, 1);
+                }
+                else
+                {
+                    UIRender.DrawRect(rect, 0.15f, 0, 1f, 1f, UIRender.interfaceTex);
+                    Text.DrawText(new StringBuilder(_tabs[idx]),
+                        new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
+                        new Color(0.7f, 0.7f, 0.7f, 1f), 0.65f, 1);
+                }
+
+                curX += tw + tabGap;
+            }
+        }
+
+        return totalTabHeight;
+    }
+
     public override void Draw()
     {
         base.Draw();
         var vp = Game1.Instance.GraphicsDevice.Viewport;
-        var boxWidth = Math.Min(900, vp.Width * 0.7f);
-        var boxHeight = vp.Height * 0.7f;
+        var boxWidth = vp.Width * 0.5f;
+        var boxHeight = vp.Height * 0.8f;
 
-        // Local coop positioning
-        var halfWidth = vp.Width * 0.5f;
+        // Always assume local coop; menu takes place in respective player's side
+        var margin = boxWidth * 0.025f;
         var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
-        var boxX = isMainPlayer ? halfWidth * 0.5f - boxWidth * 0.5f : halfWidth + halfWidth * 0.5f - boxWidth * 0.5f;
+        var boxX = isMainPlayer ? 0f - margin : vp.Width * 0.5f + margin;
         var boxY = (vp.Height - boxHeight) / 2f;
+
         UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f,
             UIRender.interfaceTex);
+
+        // Draw tabs
+        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true);
+
+        // Config list area
         _listX = boxX + 40f;
-        _listY = boxY + 40f;
+        _listY = boxY + TopMargin + usedTabHeight;
         _listWidth = boxWidth - 80f;
-        var listVisibleHeight = boxHeight - 80f;
+        var listVisibleHeight = boxHeight - TopMargin - usedTabHeight - BottomMargin;
+        _currentListVisibleHeight = listVisibleHeight;
+
         var currentY = _listY - _scrollOffset;
-        string lastCat = null;
-        for (var i = 0; i < _items.Count; i++)
+
+        string lastMod = null;
+        for (var i = 0; i < _displayedConfigs.Count; i++)
         {
-            var item = _items[i];
+            var cfg = _displayedConfigs[i];
             var selected = i == _selectedIndex;
 
-            // Category header
-            if (item.Category != lastCat)
+            // Section header (only when there are no tabs)
+            if (!HasTabs && cfg.ModName != lastMod)
             {
-                if (lastCat != null) currentY += 20f;
+                if (lastMod != null) currentY += 20f;
                 if (currentY + SectionHeight > _listY && currentY < _listY + listVisibleHeight)
                 {
-                    Text.DrawText(new StringBuilder(item.Category), new Vector2(_listX, currentY + 35f),
+                    Text.DrawText(new StringBuilder(cfg.ModName), new Vector2(_listX, currentY + 35f),
                         new Color(0.6f, 0.8f, 1f, 1f), 0.85f, 0);
                     UIRender.DrawDivider(new Vector2(_listX + _listWidth / 2f, currentY + 45f), 0.7f, 1f, 1f, 0.7f,
                         0.5f, 1, UIRender.interfaceTex);
                 }
 
                 currentY += SectionHeight;
-                lastCat = item.Category;
+                lastMod = cfg.ModName;
             }
 
-            // Draw item row
+            // Config row
             if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
                 if (selected)
                     UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
                         3, 1f, 1f, UIRender.interfaceTex);
+
                 var textColor = selected ? Color.Yellow : Color.White;
                 var textY = currentY + ItemHeight * 0.75f;
-                Text.DrawText(new StringBuilder(item.Name), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
-                var valStr = FormatValue(item);
+
+                Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
+
+                var valStr = FormatValue(cfg, selected);
                 Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY),
                     textColor, 0.7f, 0);
             }
@@ -282,47 +420,195 @@ public class LevelDevMenu : LevelBase
             currentY += ItemHeight;
         }
 
-        var action = player.inputProfile.keyMouseEnable ? "[Space]" : "[a]";
-        var help = new StringBuilder(
-            $"\u02ef{action}\u02f0 Activate/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
-        Text.DrawText(help, new Vector2(boxX + boxWidth / 2f, vp.Height - 40), Color.White, 0.6f, 1, player, 1);
+        DrawHelpBar(boxX, boxWidth, vp.Height);
     }
 
-    private static string FormatValue(DevItem item)
+    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight)
     {
-        if (item.IsAction) return "[Activate]";
-        if (item.IsBool) return item.BoolValue ? "On" : "Off";
-        if (item.IsLong) return item.LongValue.ToString("N0");
-        if (item.IsInt) return item.IntValue.ToString("N0");
-        if (item.IsFloat) return item.FloatValue.ToString("F1");
-        return "";
+        var useKeyboard = player.inputProfile.keyMouseEnable;
+        var action = useKeyboard ? "[Space]" : "[a]";
+
+        var sb = new StringBuilder();
+        sb.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+
+        if (HasTabs) sb.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+
+        Text.DrawText(sb, new Vector2(boxX + boxWidth / 2f, vpHeight - 40),
+            Color.White, 0.6f, 1, player, 1);
     }
 
-    private void EnsureVisible()
+    private string FormatValue(DevConfigEntry config, bool selected)
     {
-        var y = GetItemY(_selectedIndex);
-        var viewHeight = Game1.Instance.GraphicsDevice.Viewport.Height * 0.7f - 80f;
-        if (y < _scrollOffset)
-            _scrollOffset = y;
-        else if (y + ItemHeight > _scrollOffset + viewHeight) _scrollOffset = y + ItemHeight - viewHeight;
+        // Action items show a button prompt
+        if (config.IsAction)
+            return "[Activate]";
+
+        // Color string: show component highlight when actively editing
+        if (IsColorString(config) && selected && _colorCompIndex != -1)
+        {
+            var p = ((string)config.BoxedValue).Split(',');
+            p[_colorCompIndex] = ">" + p[_colorCompIndex] + "<";
+            return string.Join(",", p);
+        }
+
+        // Bool
+        if (config.SettingType == typeof(bool)) return config.BoolValue ? "On" : "Off";
+
+        // Float
+        if (config.SettingType == typeof(float)) return config.FloatValue.ToString("F2");
+
+        // String with acceptable-values list: show "Value (N/Total)"
+        if (config.SettingType == typeof(string) &&
+            config.AcceptableValues is { Length: > 0 } values &&
+            !IsColorString(config))
+        {
+            var current = (string)config.BoxedValue ?? "";
+            var idx = Array.IndexOf((Array)values, current);
+            var pos = idx >= 0 ? idx + 1 : 1; // snap display to 1 if value is unexpected
+            return $"{current} ({pos}/{values.Length})";
+        }
+
+        return config.BoxedValue?.ToString() ?? "null";
     }
 
+    // Scrolling helpers
     private float GetItemY(int index)
     {
         float y = 0;
         string last = null;
-        for (var i = 0; i <= index; i++)
-        {
-            if (_items[i].Category != last)
-            {
-                y += last == null ? SectionHeight : SectionHeight + 20f;
-                last = _items[i].Category;
-            }
 
-            if (i < index) y += ItemHeight;
+        if (!HasTabs)
+        {
+            for (var i = 0; i <= index; i++)
+            {
+                if (_displayedConfigs[i].ModName != last)
+                {
+                    y += last == null ? SectionHeight : SectionHeight + 20f;
+                    last = _displayedConfigs[i].ModName;
+                }
+
+                if (i < index) y += ItemHeight;
+            }
+        }
+        else
+        {
+            y = index * ItemHeight;
         }
 
         return y;
+    }
+
+    private void EnsureVisible()
+    {
+        if (_displayedConfigs.Count == 0) return;
+
+        var itemTop = GetItemY(_selectedIndex);
+        var itemBottom = itemTop + ItemHeight;
+
+        // Use the visible area that was computed during the last Draw()
+        var visibleTop = _scrollOffset;
+        var visibleBottom = _scrollOffset + _currentListVisibleHeight;
+
+        if (itemTop < visibleTop)
+            _scrollOffset = itemTop;
+        else if (itemBottom > visibleBottom)
+            _scrollOffset = itemBottom - _currentListVisibleHeight;
+
+        _scrollOffset = Math.Max(0f, _scrollOffset);
+    }
+
+    private new void PlaySelect() => AccessTools.Method(typeof(LevelBase), "PlaySelect")?.Invoke(this, null);
+    private new void PlayAccept() => AccessTools.Method(typeof(LevelBase), "PlayAccept")?.Invoke(this, null);
+    private new void PlayCancel() => AccessTools.Method(typeof(LevelBase), "PlayCancel")?.Invoke(this, null);
+    private new bool CanInput() => (bool)AccessTools.Method(typeof(LevelBase), "CanInput")?.Invoke(this, null)!;
+
+    // Self-initialisation: build the config list from SaS2DevTools.Instance
+    private List<DevConfigEntry> BuildDevConfigList()
+    {
+        var list = new List<DevConfigEntry>();
+        var devTools = SaS2DevTools.Instance;
+        if (devTools == null) return list;
+
+        var cheats = devTools.GetCheats(_currentPlayerId);
+        var global = devTools.Global;
+        if (cheats == null || global == null) return list;
+
+        string cat;
+        var order = 0;
+        // TOGGLES
+        AddBool(list, cat = "Toggles", "Godmode", () => cheats.Godmode.Value, v => cheats.Godmode.Value = v, order: order += 1);
+        AddBool(list, cat, "Invulnerable", () => cheats.Invulnerable.Value, v => cheats.Invulnerable.Value = v, order: order += 1);
+        AddBool(list, cat, "Infinite Stamina", () => cheats.InfStamina.Value, v => cheats.InfStamina.Value = v, order: order += 1);
+        AddBool(list, cat, "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = v, order: order += 1);
+        AddBool(list, cat, "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = v, order: order += 1);
+        AddBool(list, cat, "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = v, order: order += 1);
+        AddBool(list, cat, "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = v, order: order += 1);
+        AddBool(list, cat, "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = v, order: order += 1);
+        AddInt(list, cat, "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = v, order: order += 1);
+        AddBool(list, cat, "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = v, order: order += 1);
+        AddBool(list, cat, "NoClip", () => cheats.NoClip.Value, v => cheats.NoClip.Value = v, order: order += 1);
+        AddFloat(list, cat, "NoClipSpeed", () => cheats.NoClipSpeed.Value, v => cheats.NoClipSpeed.Value = v, order: order += 1);
+
+        // STATS & ACTIONS
+        AddLong(list, cat = "Stats and Actions", "Silver", () => player.stats.silver, v => player.stats.silver = v, order: order += 1);
+        AddLong(list, cat, "XP", () => player.stats.xp, v => player.stats.xp = v, order: order += 1);
+        AddAction(list, cat, "Teleport to Mage", TeleportToMageArena, order += 1);
+        AddAction(list, cat, "Refill Health/Stam", () =>
+        {
+            var c = (Character)AccessTools.Method(typeof(Player), "GetCharacter").Invoke(player, null);
+            if (c == null) return;
+            c.hp = 9999f;
+            c.stamina = 9999f;
+        }, order += 1);
+
+        // CAMERA
+        AddBool(list, cat = "Camera", "Block Input in Freecam", () => global.BlockInputInFreecam.Value, v => global.BlockInputInFreecam.Value = v, order: order += 1);
+        AddFloat(list, cat, "Camera Speed (pixels/tick)", () => global.CamSpeed, v => global.CamSpeed = v, order: order += 1);
+        AddFloat(list, cat, "Camera Zoom", () => global.CamZoom, v => global.CamZoom = v, order: order += 1);
+        AddFloat(list, cat, "Camera Zoom Multiplier (Non-freecam)", () => global.CamZoomNonFreecam.Value, v => global.CamZoomNonFreecam.Value = v, order: order += 1);
+        AddAction(list, cat, "Save current speed/zoom as defaults", global.SaveDefaults, order += 1);
+
+        // VISIBILITY
+        AddBool(list, cat = "Visibility", "Show HUD", () => global.ShowHud.Value, v => global.ShowHud.Value = v, order: order += 1);
+        AddBool(list, cat, "Show Debug HUD", () => global.ShowDebugHud.Value, v => global.ShowDebugHud.Value = v, order: order += 1);
+        AddBool(list, cat, "Show Player", () => global.ShowPlayer.Value, v => global.ShowPlayer.Value = v, order: order += 1);
+
+        // Per-monster visibility toggles
+        for (var i = 0; i < GlobalSettings.MonsterTypeLabels.Length; i++)
+        {
+            var label = GlobalSettings.MonsterTypeLabels[i];
+            var idx = i;
+            AddBool(list, cat, $"Show {label}",
+                () => global.ShowMonsterType[idx].Value,
+                v => global.ShowMonsterType[idx].Value = v, order: order += 1);
+        }
+
+        return list;
+    }
+
+    private static void AddBool(List<DevConfigEntry> list, string mod, string name, Func<bool> getter, Action<bool> setter, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(bool), getter, setter, order));
+    }
+
+    private static void AddInt(List<DevConfigEntry> list, string mod, string name, Func<int> getter, Action<int> setter, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(int), getter, setter, order));
+    }
+
+    private static void AddFloat(List<DevConfigEntry> list, string mod, string name, Func<float> getter, Action<float> setter, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(float), getter, setter, order));
+    }
+
+    private static void AddLong(List<DevConfigEntry> list, string mod, string name, Func<long> getter, Action<long> setter, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(long), getter, setter, order));
+    }
+
+    private static void AddAction(List<DevConfigEntry> list, string mod, string name, Action action, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, action, order));
     }
 
     private void TeleportToMageArena()
@@ -344,16 +630,44 @@ public class LevelDevMenu : LevelBase
         }
     }
 
-    private new void PlaySelect() => AccessTools.Method(typeof(LevelBase), "PlaySelect")?.Invoke(this, null);
-    private new void PlayAccept() => AccessTools.Method(typeof(LevelBase), "PlayAccept")?.Invoke(this, null);
-    private new void PlayCancel() => AccessTools.Method(typeof(LevelBase), "PlayCancel")?.Invoke(this, null);
-    private new bool CanInput() => (bool)AccessTools.Method(typeof(LevelBase), "CanInput")?.Invoke(this, null)!;
-
-    private class DevItem(string cat, string name, Func<object> getter, Action<object> setter, Action action = null)
+    // Internal equivalent of RegisteredConfig
+    private class DevConfigEntry(
+        string mod,
+        string name,
+        Type type,
+        Func<object> getter,
+        Action<object> setter,
+        Action action = null,
+        int order = 0)
     {
-        public readonly string Category = cat;
-        public readonly string Name = name;
-        public readonly Action Action = action;
+        public readonly string ModName = mod;
+        public readonly string DisplayName = name;
+        public readonly int Order = order;
+        public readonly Type SettingType = type;
+        public readonly string[] AcceptableValues = null;
+
+        public bool IsAction => action != null;
+
+        public DevConfigEntry(string mod, string name, Type type, Func<bool> getter, Action<bool> setter, int order = 0)
+            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((bool)v)), null, order) { }
+
+        public DevConfigEntry(string mod, string name, Type type, Func<int> getter, Action<int> setter, int order = 0)
+            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((int)v)), null, order) { }
+
+        public DevConfigEntry(string mod, string name, Type type, Func<float> getter, Action<float> setter, int order = 0)
+            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((float)v)), null, order) { }
+
+        public DevConfigEntry(string mod, string name, Type type, Func<long> getter, Action<long> setter, int order = 0)
+            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((long)v)), null, order) { }
+
+        public object BoxedValue
+        {
+            get => action != null ? null : getter();
+            set
+            {
+                if (action == null && setter != null) setter(value);
+            }
+        }
 
         public bool BoolValue
         {
@@ -379,10 +693,12 @@ public class LevelDevMenu : LevelBase
             set => setter(value);
         }
 
-        public bool IsBool => getter?.Invoke() is bool;
-        public bool IsLong => getter?.Invoke() is long;
-        public bool IsInt => getter?.Invoke() is int;
-        public bool IsFloat => getter?.Invoke() is float;
-        public bool IsAction => Action != null;
+        public string StringValue
+        {
+            get => (string)getter();
+            set => setter(value);
+        }
+
+        public void InvokeAction() => action?.Invoke();
     }
 }
