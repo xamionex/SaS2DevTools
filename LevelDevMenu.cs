@@ -161,6 +161,13 @@ public class LevelDevMenu : LevelBase
             PlayAccept();
             return;
         }
+        // Handle action items
+        if (player.keys.keyAccept && config.IsAction)
+        {
+            config.InvokeAction();
+            PlayAccept();
+            return;
+        }
 
         if (player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept)
         {
@@ -175,6 +182,7 @@ public class LevelDevMenu : LevelBase
         else if (player.keys.keyAccept && !isColor && !config.IsAction)
         {
             _fast = !_fast;
+            PlaySelect();
         }
 
         if (valueChanged)
@@ -205,12 +213,15 @@ public class LevelDevMenu : LevelBase
         }
         else if (type == typeof(int))
         {
-            config.IntValue += increase ? 1 : -1;
+            config.IntValue += fast ? increase ? 10 : -10 : increase ? 1 : -1;
+        }
+        else if (type == typeof(long))
+        {
+            config.LongValue += fast ? increase ? 1 : -1 : increase ? 1000 : -1000;
         }
         else if (type == typeof(float))
         {
-            if (fast) config.FloatValue += increase ? 0.5f : -0.5f;
-            else config.FloatValue += increase ? 0.05f : -0.05f;
+            config.FloatValue += fast ? increase ? 0.5f : -0.5f : increase ? 0.05f : -0.05f;
         }
         else if (type == typeof(string))
         {
@@ -522,7 +533,7 @@ public class LevelDevMenu : LevelBase
     private new void PlayCancel() => AccessTools.Method(typeof(LevelBase), "PlayCancel")?.Invoke(this, null);
     private new bool CanInput() => (bool)AccessTools.Method(typeof(LevelBase), "CanInput")?.Invoke(this, null)!;
 
-    // Self-initialisation: build the config list from SaS2DevTools.Instance
+    // Self-initialization: build the config list from SaS2DevTools.Instance
     private List<DevConfigEntry> BuildDevConfigList()
     {
         var list = new List<DevConfigEntry>();
@@ -649,16 +660,16 @@ public class LevelDevMenu : LevelBase
         public bool IsAction => action != null;
 
         public DevConfigEntry(string mod, string name, Type type, Func<bool> getter, Action<bool> setter, int order = 0)
-            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((bool)v)), null, order) { }
+            : this(mod, name, type, () => getter(), v => setter((bool)v), null, order) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<int> getter, Action<int> setter, int order = 0)
-            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((int)v)), null, order) { }
+            : this(mod, name, type, () => getter(), v => setter((int)v), null, order) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<float> getter, Action<float> setter, int order = 0)
-            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((float)v)), null, order) { }
+            : this(mod, name, type, () => getter(), v => setter((float)v), null, order) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<long> getter, Action<long> setter, int order = 0)
-            : this(mod, name, type, () => getter(), (Action<object>)(v => setter((long)v)), null, order) { }
+            : this(mod, name, type, () => getter(), v => setter((long)v), null, order) { }
 
         public object BoxedValue
         {
