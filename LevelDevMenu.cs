@@ -9,6 +9,7 @@ using Menumancer.hud;
 using Menumancer.UIFormat;
 using ProjectMage;
 using ProjectMage.character;
+using ProjectMage.config;
 using ProjectMage.gamestate;
 using ProjectMage.gamestate.mage;
 using ProjectMage.player;
@@ -53,6 +54,17 @@ public class LevelDevMenu : LevelBase
     // Keybind capture state. Non-null while waiting for the user to press a key/button to rebind.
     private DevConfigEntry _rebindingConfig;
     private Keybind.Capture _rebindCapture;
+
+    // Mouse hit-test rects recorded during Draw() and consumed by the next Update().
+    // Mouse input only applies to the player whose ID == 0 (see MouseMgr), matching vanilla.
+    private struct ItemHit
+    {
+        public int Index;
+        public Rectangle Rect;
+    }
+
+    private Rectangle[] _tabHitRects;
+    private readonly List<ItemHit> _itemHitRects = [];
 
     // Dynamic sizing
     private float _currentListVisibleHeight;
@@ -125,6 +137,9 @@ public class LevelDevMenu : LevelBase
             HandleRebindCapture();
             return;
         }
+
+        // Mouse navigation (player 0 only). Returns true when it consumes a discrete action.
+        if (HandleMouseInput()) return;
 
         // Tab navigation
         if (HasTabs)
@@ -362,6 +377,10 @@ public class LevelDevMenu : LevelBase
 
         if (!draw) return totalTabHeight;
 
+        // (Re)build the tab hit-test table for mouse clicks.
+        if (_tabHitRects == null || _tabHitRects.Length != _tabs.Count)
+            _tabHitRects = new Rectangle[_tabs.Count];
+
         // Draw each row, centered
         for (var r = 0; r < rows.Count; r++)
         {
@@ -375,6 +394,7 @@ public class LevelDevMenu : LevelBase
             {
                 var tw = tabWidths[idx];
                 var rect = new Rectangle((int)curX, (int)rowY, (int)tw, (int)tabH);
+                _tabHitRects[idx] = rect;
 
                 if (idx == _currentTabIndex)
                 {
@@ -426,6 +446,9 @@ public class LevelDevMenu : LevelBase
 
         var currentY = _listY - _scrollOffset;
 
+        // Rebuild the item hit-test table each frame for mouse hover/click.
+        _itemHitRects.Clear();
+
         string lastMod = null;
         for (var i = 0; i < _displayedConfigs.Count; i++)
         {
@@ -451,6 +474,12 @@ public class LevelDevMenu : LevelBase
             // Config row
             if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
+                _itemHitRects.Add(new ItemHit
+                {
+                    Index = i,
+                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight)
+                });
+
                 if (selected)
                     UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
                         3, 1f, 1f, UIRender.interfaceTex);
@@ -583,6 +612,123 @@ public class LevelDevMenu : LevelBase
 
         _scrollOffset = Math.Max(0f, _scrollOffset);
     }
+
+    // Mouse navigation for player 0. Reads MouseMgr public state and the hit-test rects recorded
+    // during the previous Draw(). Mirrors vanilla CheckMouseHover: hover only re-selects while the
+    // cursor is moving, so it never fights keyboard/controller nav at rest. Returns true when a
+    // discrete action (tab/value click or scroll) was performed.
+    private bool HandleMouseInput()
+    {
+        if (player.ID != 0 || !MouseMgr.isActive) return false;
+
+        var moved = MouseMgr.moveFrame > 0f;
+        var clickActive = GameStateManager.activeFocus;
+        var leftClick = clickActive && MouseMgr.isLeftClick;
+        var rightClick = clickActive && MouseMgr.isRightClick;
+
+        // Scroll wheel moves the selection, like up/down.
+        if ((MouseMgr.isScrollUp || MouseMgr.isScrollDown) && _displayedConfigs.Count > 0)
+        {
+            var dir = MouseMgr.isScrollUp ? -1 : 1;
+            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            _colorCompIndex = -1;
+            PlaySelect();
+            EnsureVisible();
+            return true;
+        }
+
+        var mouse = MouseMgr.mLoc;
+
+        // Tab clicks switch tabs.
+        if (HasTabs && leftClick && _tabHitRects != null)
+        {
+            for (var t = 0; t < _tabHitRects.Length && t < _tabs.Count; t++)
+            {
+                if (!PointInRect(mouse, _tabHitRects[t])) continue;
+                player.menu.mouseInRect = true;
+                if (t != _currentTabIndex)
+                {
+                    _currentTabIndex = t;
+                    RefreshDisplayedConfigs();
+                    PlaySelect();
+                }
+
+                return true;
+            }
+        }
+
+        if (_displayedConfigs.Count == 0) return false;
+
+        // Item hover / click.
+        foreach (var hit in _itemHitRects)
+        {
+            if (!PointInRect(mouse, hit.Rect)) continue;
+
+            // Resting cursor over the list: do nothing, let keyboard/controller drive.
+            if (!moved && !leftClick && !rightClick) return false;
+
+            player.menu.mouseInRect = true;
+
+            // Moving the cursor selects the row underneath it.
+            if (moved && hit.Index != _selectedIndex)
+            {
+                _selectedIndex = hit.Index;
+                _colorCompIndex = -1;
+                PlaySelect();
+            }
+
+            if (!leftClick && !rightClick) return false; // hover only, no value change
+
+            if (hit.Index != _selectedIndex)
+            {
+                _selectedIndex = hit.Index;
+                _colorCompIndex = -1;
+            }
+
+            var config = _displayedConfigs[_selectedIndex];
+
+            // Keybind: left click rebinds; right click resets to default.
+            if (config.IsKeybind)
+            {
+                if (leftClick) BeginRebind(config);
+                else if (rightClick)
+                {
+                    config.Keybind.ResetToDefault();
+                    PlaySelect();
+                }
+
+                return true;
+            }
+
+            // Action row: left click activates it.
+            if (config.IsAction)
+            {
+                if (leftClick)
+                {
+                    config.InvokeAction();
+                    PlayAccept();
+                }
+
+                return true;
+            }
+
+            // Colour picker: when a component is active (entered via Accept), click nudges it;
+            // otherwise left = increase, right = decrease.
+            if (IsColorString(config) && _colorCompIndex != -1)
+                ModifyColorComponent(config, _colorCompIndex, leftClick);
+            else
+                ModifyValue(config, leftClick, _fast);
+
+            SaS2DevTools.Instance.Config.Save();
+            PlaySelect();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool PointInRect(Vector2 p, Rectangle r) =>
+        p.X > r.X && p.X < r.Right && p.Y > r.Y && p.Y < r.Bottom;
 
     // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players),
     // used when capturing controller combos.
