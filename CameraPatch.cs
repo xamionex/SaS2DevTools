@@ -42,7 +42,6 @@ public static class CameraPatch
 
     // Input states
     private static readonly HashSet<Keys> KHeld = [];
-    private static bool _rscLscWasPressed;
     private static GamePadState _prevGp;
     private static bool KDown(KeyboardState ks, Keys k) => ks.IsKeyDown(k);
 
@@ -55,6 +54,34 @@ public static class CameraPatch
 
     private static bool GpSingle(GamePadState cur, Func<GamePadState, bool> pressed) =>
         pressed(cur) && !pressed(_prevGp);
+
+    // Per-frame zoom step for the continuous (held) non-freecam zoom binds.
+    private const float ZoomStep = 0.015f;
+
+    // Rising-edge state for the four rebindable toggle combos.
+    // Keyboard state is shared (dedupes across the per-player InputProfile.Update calls);
+    // gamepad state is keyed by gamepad index so each controller fires independently.
+    private static readonly bool[] DevKbHeld = new bool[4];
+    private static readonly bool[,] DevPadHeld = new bool[4, 4];
+
+    private static bool DevBindPressed(int idx, Keybind bind, KeyboardState ks, GamePadState gp, int padIdx)
+    {
+        if (bind == null) return false;
+        var fired = false;
+
+        var kb = bind.HeldKeyboard(ks);
+        if (kb && !DevKbHeld[idx]) fired = true;
+        DevKbHeld[idx] = kb;
+
+        if (padIdx is >= 0 and < 4)
+        {
+            var pad = gp.IsConnected && bind.HeldGamepad(gp);
+            if (pad && !DevPadHeld[idx, padIdx]) fired = true;
+            DevPadHeld[idx, padIdx] = pad;
+        }
+
+        return fired;
+    }
 
     // Block input when freecam is active
     [HarmonyPrefix]
@@ -91,9 +118,17 @@ public static class CameraPatch
         var ctrl = ks.IsKeyDown(Keys.LeftControl) || ks.IsKeyDown(Keys.RightControl);
         var alt = ks.IsKeyDown(Keys.LeftAlt) || ks.IsKeyDown(Keys.RightAlt);
         var tickCount = Environment.TickCount;
+        var gp = GetGamePadState(playerIdx);
 
-        // Toggle free-cam with F5
-        if ((KSingle(ks, Keys.F5) || global.ActivateFreecam) && tickCount - global.LastActivateTime >= GlobalSettings.ThrottleInterval)
+        // Freecam and HUD toggles are edge-detected (fire once per press).
+        var freecamPressed = DevBindPressed(0, global.FreecamBind, ks, gp, playerIdx);
+        var hudPressed = DevBindPressed(1, global.ToggleHudBind, ks, gp, playerIdx);
+        // Zoom is continuous (held) for smooth, cooldown-free zooming.
+        var zoomOutHeld = global.ZoomOutBind != null && global.ZoomOutBind.Held(ks, gp);
+        var zoomInHeld = global.ZoomInBind != null && global.ZoomInBind.Held(ks, gp);
+
+        // Toggle free-cam (default keyboard F5, gamepad RS+LS), or via menu request.
+        if ((freecamPressed || global.ActivateFreecam) && tickCount - global.LastActivateTime >= GlobalSettings.ThrottleInterval)
         {
             global.ToggleFreeCam();
             global.LastActivateTime = tickCount;
@@ -129,23 +164,19 @@ public static class CameraPatch
                 global.CamZoom += zoomStep;
         }
 
-        // HUD visibility toggle
-        if (KSingle(ks, Keys.F6) && tickCount - global.LastToggleHudTime >= GlobalSettings.ThrottleInterval)
+        // HUD visibility toggle (default keyboard F6, gamepad B)
+        if (hudPressed && tickCount - global.LastToggleHudTime >= GlobalSettings.ThrottleInterval)
         {
             global.ShowHud.Value = !global.ShowHud.Value;
             global.LastToggleHudTime = tickCount;
         }
-        
-        if (KSingle(ks, Keys.F7) && tickCount - global.LastZoomOutTime >= GlobalSettings.NonfreecamZoomThrottleInterval)
-        {
-            global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - 0.05f);
-            global.LastZoomOutTime = tickCount;
-        }
-        if (KSingle(ks, Keys.F8) && tickCount - global.LastZoomInTime >= GlobalSettings.NonfreecamZoomThrottleInterval)
-        {
-            global.CamZoomNonFreecam.Value += 0.05f;
-            global.LastZoomInTime = tickCount;
-        }
+
+        // Non-freecam zoom (default keyboard F7/F8, gamepad RS+DLeft / RS+DRight).
+        // Continuous while held, no interval cooldown, so it zooms smoothly.
+        if (zoomOutHeld)
+            global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - ZoomStep);
+        if (zoomInHeld)
+            global.CamZoomNonFreecam.Value += ZoomStep;
 
         // Monster-type visibility toggles
         var monsterKeys = new[] { Keys.D0, Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7 };
@@ -153,27 +184,13 @@ public static class CameraPatch
             if (KSingle(ks, monsterKeys[i]))
                 global.ShowMonsterType[i].Value = !global.ShowMonsterType[i].Value;
 
-        // Controller
-        // Only process if we have a valid gamepad index
-        if (playerIdx < 0) return;
-        var gp = GetGamePadState(playerIdx);
-        if (!gp.IsConnected) return;
+        // Controller analog / freecam controls. Discrete toggle combos (freecam, HUD, zoom)
+        // are handled by the rebindable binds above and are not duplicated here.
+        if (playerIdx < 0 || !gp.IsConnected) return;
 
-        // Toggle free-cam with RSC + LSC (both sticks clicked)
         var rscPressed = gp.Buttons.RightStick == ButtonState.Pressed;
-        var lscPressed = gp.Buttons.LeftStick == ButtonState.Pressed;
-        if (rscPressed && lscPressed && !_rscLscWasPressed && tickCount - global.LastActivateTime >= GlobalSettings.ThrottleInterval)
-        {
-            global.ToggleFreeCam();
-            global.LastActivateTime = tickCount;
-            _rscLscWasPressed = true;
-        }
-        else if (!rscPressed || !lscPressed)
-        {
-            _rscLscWasPressed = false;
-        }
-        
-        // Non‑freecam zoom: RSC + LS L/R or DPAD L/R
+
+        // Non-freecam zoom: RS + left-stick X (analog).
         if (rscPressed)
         {
             var stickX = gp.ThumbSticks.Left.X;
@@ -190,20 +207,6 @@ public static class CameraPatch
                         global.LastZoomInTime = tickCount;
                         break;
                 }
-            }
-            
-            if (GpSingle(gp, g => g.DPad.Left == ButtonState.Pressed) && tickCount - global.LastZoomOutTime >=
-                GlobalSettings.NonfreecamZoomThrottleInterval)
-            {
-                global.CamZoomNonFreecam.Value = Math.Max(0.5f, global.CamZoomNonFreecam.Value - 0.05f);
-                global.LastZoomOutTime = tickCount;
-            }
-
-            if (GpSingle(gp, g => g.DPad.Right == ButtonState.Pressed) && tickCount - global.LastZoomInTime >=
-                GlobalSettings.NonfreecamZoomThrottleInterval)
-            {
-                global.CamZoomNonFreecam.Value += 0.05f;
-                global.LastZoomInTime = tickCount;
             }
         }
 
@@ -237,13 +240,6 @@ public static class CameraPatch
         if (gp.Triggers.Left > 0.3f) zoomDelta -= gp.Triggers.Left * zoomDeltaMulti;
         if (gp.Triggers.Right > 0.3f) zoomDelta += gp.Triggers.Right * zoomDeltaMulti;
         if (zoomDelta != 0f) global.CamZoom = Math.Max(1f, global.CamZoom + zoomDelta);
-
-        // HUD visibility toggle (B)
-        if (GpSingle(gp, g => g.Buttons.B == ButtonState.Pressed) && tickCount - global.LastToggleHudTime >= GlobalSettings.ThrottleInterval)
-        {
-            global.ShowHud.Value = !global.ShowHud.Value;
-            global.LastToggleHudTime = tickCount;
-        }
     }
 
     // SCROLL OVERRIDE, runs after CamMgr finishes its own scroll update

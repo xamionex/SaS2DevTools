@@ -50,6 +50,10 @@ public class LevelDevMenu : LevelBase
     // Color Editing State
     private int _colorCompIndex = -1; // -1 = none, 0=R, 1=G, 2=B, 3=A
 
+    // Keybind capture state. Non-null while waiting for the user to press a key/button to rebind.
+    private DevConfigEntry _rebindingConfig;
+    private Keybind.Capture _rebindCapture;
+
     // Dynamic sizing
     private float _currentListVisibleHeight;
 
@@ -115,6 +119,13 @@ public class LevelDevMenu : LevelBase
     {
         if (!CanInput()) return;
 
+        // While rebinding, capture the next key press and ignore all other input.
+        if (_rebindingConfig != null)
+        {
+            HandleRebindCapture();
+            return;
+        }
+
         // Tab navigation
         if (HasTabs)
         {
@@ -151,7 +162,33 @@ public class LevelDevMenu : LevelBase
         var activeEntry = GetActiveEntry(config);
         var isColor = IsColorString(activeEntry);
         var isBool = IsBool(activeEntry);
+        var isKeybind = config.IsKeybind;
         var valueChanged = false;
+
+        // Reset to default: X-option (Backspace / controller X) works on any option type.
+        if (player.keys.keyXOption)
+        {
+            ResetOption(config);
+            PlaySelect();
+            return;
+        }
+
+        // Keybind: Accept enters capture mode; Y-option (Tab / controller Y) toggles enable/disable.
+        if (isKeybind)
+        {
+            if (player.keys.keyAccept)
+            {
+                BeginRebind(config);
+                return;
+            }
+
+            if (player.keys.keyYOption)
+            {
+                config.Keybind.ToggleEnabled();
+                PlaySelect();
+                return;
+            }
+        }
 
         // Color Picker: Accept cycles R -> G -> B -> A -> Off
         if (player.keys.keyAccept && isColor)
@@ -169,7 +206,7 @@ public class LevelDevMenu : LevelBase
             return;
         }
 
-        if (player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept)
+        if ((player.keys.keyLeft || player.keys.keyRight || isBool && player.keys.keyAccept) && !isKeybind)
         {
             var right = player.keys.keyRight;
             if (isColor && _colorCompIndex != -1)
@@ -179,7 +216,7 @@ public class LevelDevMenu : LevelBase
 
             valueChanged = true;
         }
-        else if (player.keys.keyAccept && !isColor && !config.IsAction)
+        else if (player.keys.keyAccept && !isColor && !config.IsAction && !isKeybind)
         {
             _fast = !_fast;
             PlaySelect();
@@ -294,7 +331,7 @@ public class LevelDevMenu : LevelBase
         var tabY = boxY + 6f;
         var tabH = TabBarHeight - 6f;
 
-        // Pre‑measure each tab width
+        // Pre-measure each tab width
         var tabWidths = new float[_tabs.Count];
         for (var t = 0; t < _tabs.Count; t++)
             tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f, player, 1) + TabPadX * 2f;
@@ -439,13 +476,28 @@ public class LevelDevMenu : LevelBase
         var useKeyboard = player.inputProfile.keyMouseEnable;
         var action = useKeyboard ? "[Space]" : "[a]";
 
-        var sb = new StringBuilder();
-        sb.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change  |  \u02ef[b]\u02f0 Back");
+        var centerX = boxX + boxWidth / 2f;
+        var sel = _displayedConfigs is { Count: > 0 } && _selectedIndex >= 0 &&
+                  _selectedIndex < _displayedConfigs.Count
+            ? _displayedConfigs[_selectedIndex]
+            : null;
+        var selectedKeybind = sel is { IsKeybind: true };
+        var selectedResettable = sel != null && (sel.IsKeybind || sel.HasDefault);
 
-        if (HasTabs) sb.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+        // Line 1: edit / change / reset (/ enable toggle for keybinds).
+        var top = new StringBuilder();
+        top.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change");
+        if (selectedResettable)
+            top.Append(useKeyboard ? "  |  \u02efBksp\u02f0 Reset" : "  |  \u02ef[x]\u02f0 Reset");
+        if (selectedKeybind)
+            top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
+        Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
 
-        Text.DrawText(sb, new Vector2(boxX + boxWidth / 2f, vpHeight - 40),
-            Color.White, 0.6f, 1, player, 1);
+        // Line 2: back / tab (kept on their own line so the bar does not get too wide).
+        var bottom = new StringBuilder();
+        bottom.Append("\u02ef[b]\u02f0 Back");
+        if (HasTabs) bottom.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
+        Text.DrawText(bottom, new Vector2(centerX, vpHeight - 38), Color.White, 0.6f, 1, player, 1);
     }
 
     private string FormatValue(DevConfigEntry config, bool selected)
@@ -453,6 +505,10 @@ public class LevelDevMenu : LevelBase
         // Action items show a button prompt
         if (config.IsAction)
             return "[Activate]";
+
+        // Keybind: show the bound combo, or a prompt while capturing.
+        if (config.IsKeybind)
+            return _rebindingConfig == config ? "Press input... (Esc)" : config.Keybind.DisplayString();
 
         // Color string: show component highlight when actively editing
         if (IsColorString(config) && selected && _colorCompIndex != -1)
@@ -528,6 +584,66 @@ public class LevelDevMenu : LevelBase
         _scrollOffset = Math.Max(0f, _scrollOffset);
     }
 
+    // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players),
+    // used when capturing controller combos.
+    private GamePadState GetPlayerGamePad()
+    {
+        var idx = player.inputProfile?.gamepadIdx ?? -1;
+        if (idx < 0) idx = 0;
+        var gps = GlobalInputMgr.gps;
+        return gps != null && idx < gps.Length ? gps[idx] : default;
+    }
+
+    // Reset an option to its default. Keybinds restore their default combo (and re-enable);
+    // config-backed options restore the config entry's default. Live/runtime values and action
+    // rows have no resettable default and are left unchanged.
+    private void ResetOption(DevConfigEntry config)
+    {
+        if (config.IsKeybind)
+        {
+            config.Keybind.ResetToDefault();
+            return;
+        }
+
+        if (!config.HasDefault) return;
+        config.BoxedValue = config.DefaultValue;
+        SaS2DevTools.Instance.Config.Save();
+    }
+
+    // Enter keybind capture mode. Inputs held right now (e.g. the Accept key/button) are ignored
+    // until released; the combo commits only once all capture inputs are released.
+    private void BeginRebind(DevConfigEntry config)
+    {
+        _rebindingConfig = config;
+        _rebindCapture = new Keybind.Capture(GlobalInputMgr.ks, GetPlayerGamePad());
+        PlayAccept();
+    }
+
+    // Drive the capture each frame; commit on release. Escape cancels.
+    private void HandleRebindCapture()
+    {
+        var ks = GlobalInputMgr.ks;
+        if (ks.IsKeyDown(Keys.Escape))
+        {
+            EndRebind();
+            PlayCancel();
+            return;
+        }
+
+        if (_rebindCapture.Poll(ks, GetPlayerGamePad(), _rebindingConfig.Keybind))
+        {
+            _rebindingConfig.Keybind.Save();
+            EndRebind();
+            PlayAccept();
+        }
+    }
+
+    private void EndRebind()
+    {
+        _rebindingConfig = null;
+        _rebindCapture = null;
+    }
+
     private new void PlaySelect() => AccessTools.Method(typeof(LevelBase), "PlaySelect")?.Invoke(this, null);
     private new void PlayAccept() => AccessTools.Method(typeof(LevelBase), "PlayAccept")?.Invoke(this, null);
     private new void PlayCancel() => AccessTools.Method(typeof(LevelBase), "PlayCancel")?.Invoke(this, null);
@@ -547,20 +663,20 @@ public class LevelDevMenu : LevelBase
         string cat;
         var order = 0;
         // TOGGLES
-        AddBool(list, cat = "Toggles", "Godmode", () => cheats.Godmode.Value, v => cheats.Godmode.Value = v, order: order += 1);
-        AddBool(list, cat, "Invulnerable", () => cheats.Invulnerable.Value, v => cheats.Invulnerable.Value = v, order: order += 1);
-        AddBool(list, cat, "Infinite Stamina", () => cheats.InfStamina.Value, v => cheats.InfStamina.Value = v, order: order += 1);
-        AddBool(list, cat, "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = v, order: order += 1);
-        AddBool(list, cat, "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = v, order: order += 1);
-        AddBool(list, cat, "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = v, order: order += 1);
-        AddBool(list, cat, "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = v, order: order += 1);
-        AddBool(list, cat, "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = v, order: order += 1);
-        AddInt(list, cat, "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = v, order: order += 1);
-        AddBool(list, cat, "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = v, order: order += 1);
-        AddBool(list, cat, "NoClip", () => cheats.NoClip.Value, v => cheats.NoClip.Value = v, order: order += 1);
-        AddFloat(list, cat, "NoClipSpeed", () => cheats.NoClipSpeed.Value, v => cheats.NoClipSpeed.Value = v, order: order += 1);
+        AddBool(list, cat = "Toggles", "Godmode", () => cheats.Godmode.Value, v => cheats.Godmode.Value = v, order: order += 1, defaultValue: cheats.Godmode.DefaultValue);
+        AddBool(list, cat, "Invulnerable", () => cheats.Invulnerable.Value, v => cheats.Invulnerable.Value = v, order: order += 1, defaultValue: cheats.Invulnerable.DefaultValue);
+        AddBool(list, cat, "Infinite Stamina", () => cheats.InfStamina.Value, v => cheats.InfStamina.Value = v, order: order += 1, defaultValue: cheats.InfStamina.DefaultValue);
+        AddBool(list, cat, "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = v, order: order += 1, defaultValue: cheats.InfPoise.DefaultValue);
+        AddBool(list, cat, "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = v, order: order += 1, defaultValue: cheats.Unstaggerable.DefaultValue);
+        AddBool(list, cat, "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = v, order: order += 1, defaultValue: cheats.InfJumps.DefaultValue);
+        AddBool(list, cat, "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = v, order: order += 1, defaultValue: cheats.PlayJumpSnd.DefaultValue);
+        AddBool(list, cat, "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = v, order: order += 1, defaultValue: cheats.IncreaseJumps.DefaultValue);
+        AddInt(list, cat, "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = v, order: order += 1, defaultValue: cheats.ExtraJumps.DefaultValue);
+        AddBool(list, cat, "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = v, order: order += 1, defaultValue: cheats.NoFallDmg.DefaultValue);
+        AddBool(list, cat, "NoClip", () => cheats.NoClip.Value, v => cheats.NoClip.Value = v, order: order += 1, defaultValue: cheats.NoClip.DefaultValue);
+        AddFloat(list, cat, "NoClipSpeed", () => cheats.NoClipSpeed.Value, v => cheats.NoClipSpeed.Value = v, order: order += 1, defaultValue: cheats.NoClipSpeed.DefaultValue);
 
-        // STATS & ACTIONS
+        // STATS & ACTIONS (live values / actions - no resettable default)
         AddLong(list, cat = "Stats and Actions", "Silver", () => player.stats.silver, v => player.stats.silver = v, order: order += 1);
         AddLong(list, cat, "XP", () => player.stats.xp, v => player.stats.xp = v, order: order += 1);
         AddAction(list, cat, "Teleport to Mage", TeleportToMageArena, order += 1);
@@ -572,17 +688,17 @@ public class LevelDevMenu : LevelBase
             c.stamina = 9999f;
         }, order += 1);
 
-        // CAMERA
-        AddBool(list, cat = "Camera", "Block Input in Freecam", () => global.BlockInputInFreecam.Value, v => global.BlockInputInFreecam.Value = v, order: order += 1);
+        // CAMERA (CamSpeed/CamZoom are runtime values - reset via "Save defaults" action instead)
+        AddBool(list, cat = "Camera", "Block Input in Freecam", () => global.BlockInputInFreecam.Value, v => global.BlockInputInFreecam.Value = v, order: order += 1, defaultValue: global.BlockInputInFreecam.DefaultValue);
         AddFloat(list, cat, "Camera Speed (pixels/tick)", () => global.CamSpeed, v => global.CamSpeed = v, order: order += 1);
         AddFloat(list, cat, "Camera Zoom", () => global.CamZoom, v => global.CamZoom = v, order: order += 1);
-        AddFloat(list, cat, "Camera Zoom Multiplier (Non-freecam)", () => global.CamZoomNonFreecam.Value, v => global.CamZoomNonFreecam.Value = v, order: order += 1);
+        AddFloat(list, cat, "Camera Zoom Multiplier (Non-freecam)", () => global.CamZoomNonFreecam.Value, v => global.CamZoomNonFreecam.Value = v, order: order += 1, defaultValue: global.CamZoomNonFreecam.DefaultValue);
         AddAction(list, cat, "Save current speed/zoom as defaults", global.SaveDefaults, order += 1);
 
         // VISIBILITY
-        AddBool(list, cat = "Visibility", "Show HUD", () => global.ShowHud.Value, v => global.ShowHud.Value = v, order: order += 1);
-        AddBool(list, cat, "Show Debug HUD", () => global.ShowDebugHud.Value, v => global.ShowDebugHud.Value = v, order: order += 1);
-        AddBool(list, cat, "Show Player", () => global.ShowPlayer.Value, v => global.ShowPlayer.Value = v, order: order += 1);
+        AddBool(list, cat = "Visibility", "Show HUD", () => global.ShowHud.Value, v => global.ShowHud.Value = v, order: order += 1, defaultValue: global.ShowHud.DefaultValue);
+        AddBool(list, cat, "Show Debug HUD", () => global.ShowDebugHud.Value, v => global.ShowDebugHud.Value = v, order: order += 1, defaultValue: global.ShowDebugHud.DefaultValue);
+        AddBool(list, cat, "Show Player", () => global.ShowPlayer.Value, v => global.ShowPlayer.Value = v, order: order += 1, defaultValue: global.ShowPlayer.DefaultValue);
 
         // Per-monster visibility toggles
         for (var i = 0; i < GlobalSettings.MonsterTypeLabels.Length; i++)
@@ -591,35 +707,47 @@ public class LevelDevMenu : LevelBase
             var idx = i;
             AddBool(list, cat, $"Show {label}",
                 () => global.ShowMonsterType[idx].Value,
-                v => global.ShowMonsterType[idx].Value = v, order: order += 1);
+                v => global.ShowMonsterType[idx].Value = v, order: order += 1,
+                defaultValue: global.ShowMonsterType[idx].DefaultValue);
         }
+
+        // KEYBINDS (keyboard only; controller binds remain fixed)
+        AddKeybind(list, cat = "Keybinds", "Toggle Freecam", global.FreecamBind, order += 1);
+        AddKeybind(list, cat, "Toggle HUD", global.ToggleHudBind, order += 1);
+        AddKeybind(list, cat, "Zoom Out (non-freecam)", global.ZoomOutBind, order += 1);
+        AddKeybind(list, cat, "Zoom In (non-freecam)", global.ZoomInBind, order += 1);
 
         return list;
     }
 
-    private static void AddBool(List<DevConfigEntry> list, string mod, string name, Func<bool> getter, Action<bool> setter, int order = 0)
+    private static void AddBool(List<DevConfigEntry> list, string mod, string name, Func<bool> getter, Action<bool> setter, int order = 0, object defaultValue = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(bool), getter, setter, order));
+        list.Add(new DevConfigEntry(mod, name, typeof(bool), getter, setter, order, defaultValue));
     }
 
-    private static void AddInt(List<DevConfigEntry> list, string mod, string name, Func<int> getter, Action<int> setter, int order = 0)
+    private static void AddInt(List<DevConfigEntry> list, string mod, string name, Func<int> getter, Action<int> setter, int order = 0, object defaultValue = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(int), getter, setter, order));
+        list.Add(new DevConfigEntry(mod, name, typeof(int), getter, setter, order, defaultValue));
     }
 
-    private static void AddFloat(List<DevConfigEntry> list, string mod, string name, Func<float> getter, Action<float> setter, int order = 0)
+    private static void AddFloat(List<DevConfigEntry> list, string mod, string name, Func<float> getter, Action<float> setter, int order = 0, object defaultValue = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(float), getter, setter, order));
+        list.Add(new DevConfigEntry(mod, name, typeof(float), getter, setter, order, defaultValue));
     }
 
-    private static void AddLong(List<DevConfigEntry> list, string mod, string name, Func<long> getter, Action<long> setter, int order = 0)
+    private static void AddLong(List<DevConfigEntry> list, string mod, string name, Func<long> getter, Action<long> setter, int order = 0, object defaultValue = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(long), getter, setter, order));
+        list.Add(new DevConfigEntry(mod, name, typeof(long), getter, setter, order, defaultValue));
     }
 
     private static void AddAction(List<DevConfigEntry> list, string mod, string name, Action action, int order = 0)
     {
         list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, action, order));
+    }
+
+    private static void AddKeybind(List<DevConfigEntry> list, string mod, string name, Keybind keybind, int order = 0)
+    {
+        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, null, order, keybind));
     }
 
     private void TeleportToMageArena()
@@ -649,7 +777,9 @@ public class LevelDevMenu : LevelBase
         Func<object> getter,
         Action<object> setter,
         Action action = null,
-        int order = 0)
+        int order = 0,
+        Keybind keybind = null,
+        object defaultValue = null)
     {
         public readonly string ModName = mod;
         public readonly string DisplayName = name;
@@ -657,19 +787,31 @@ public class LevelDevMenu : LevelBase
         public readonly Type SettingType = type;
         public readonly string[] AcceptableValues = null;
 
+        /// Non-null when this row is a rebindable key/button combo (see Keybind).
+        public readonly Keybind Keybind = keybind;
+        public bool IsKeybind => Keybind != null;
+
         public bool IsAction => action != null;
 
-        public DevConfigEntry(string mod, string name, Type type, Func<bool> getter, Action<bool> setter, int order = 0)
-            : this(mod, name, type, () => getter(), v => setter((bool)v), null, order) { }
+        /// The value restored by a reset (null when this option has no resettable default).
+        public readonly object DefaultValue = defaultValue;
+        public bool HasDefault => DefaultValue != null;
 
-        public DevConfigEntry(string mod, string name, Type type, Func<int> getter, Action<int> setter, int order = 0)
-            : this(mod, name, type, () => getter(), v => setter((int)v), null, order) { }
+        public DevConfigEntry(string mod, string name, Type type, Func<bool> getter, Action<bool> setter,
+                int order = 0, object defaultValue = null)
+            : this(mod, name, type, () => getter(), v => setter((bool)v), null, order, null, defaultValue) { }
 
-        public DevConfigEntry(string mod, string name, Type type, Func<float> getter, Action<float> setter, int order = 0)
-            : this(mod, name, type, () => getter(), v => setter((float)v), null, order) { }
+        public DevConfigEntry(string mod, string name, Type type, Func<int> getter, Action<int> setter,
+                int order = 0, object defaultValue = null)
+            : this(mod, name, type, () => getter(), v => setter((int)v), null, order, null, defaultValue) { }
 
-        public DevConfigEntry(string mod, string name, Type type, Func<long> getter, Action<long> setter, int order = 0)
-            : this(mod, name, type, () => getter(), v => setter((long)v), null, order) { }
+        public DevConfigEntry(string mod, string name, Type type, Func<float> getter, Action<float> setter,
+                int order = 0, object defaultValue = null)
+            : this(mod, name, type, () => getter(), v => setter((float)v), null, order, null, defaultValue) { }
+
+        public DevConfigEntry(string mod, string name, Type type, Func<long> getter, Action<long> setter,
+                int order = 0, object defaultValue = null)
+            : this(mod, name, type, () => getter(), v => setter((long)v), null, order, null, defaultValue) { }
 
         public object BoxedValue
         {

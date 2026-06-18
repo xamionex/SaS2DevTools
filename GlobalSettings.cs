@@ -55,6 +55,12 @@ public class GlobalSettings
     public readonly ConfigEntry<bool> ShowDebugHud;
     public readonly ConfigEntry<bool> ShowPlayer;
 
+    // Keybinds (rebindable combos: keyboard modifier+key and/or gamepad modifier+button).
+    public readonly Keybind FreecamBind;
+    public readonly Keybind ToggleHudBind;
+    public readonly Keybind ZoomOutBind;
+    public readonly Keybind ZoomInBind;
+
     public GlobalSettings(ConfigFile cfg)
     {
         const string camSection = "Camera";
@@ -84,6 +90,18 @@ public class GlobalSettings
         for (var i = 0; i < MonsterTypeLabels.Length; i++)
             ShowMonsterType[i] = cfg.Bind(visSection, $"Show_{MonsterTypeLabels[i]}", true,
                 $"Show {MonsterTypeLabels[i]} entities.");
+
+        // Keybinds (rebindable combos via the Dev menu). Format "KbMod|KbKey|PadMod|PadButton";
+        // gamepad codes: RS=-29, LS=-28, B=-15, DLeft=-10, DRight=-11.
+        const string keybindSection = "Keybinds";
+        FreecamBind = new Keybind(cfg.Bind(keybindSection, "Toggle Freecam", "None|F5|-29|-28",
+            "Toggle free-cam. Default keyboard F5, gamepad RS+LS."));
+        ToggleHudBind = new Keybind(cfg.Bind(keybindSection, "Toggle HUD", "None|F6|-28|-15",
+            "Toggle the HUD. Default keyboard F6, gamepad LS+B."));
+        ZoomOutBind = new Keybind(cfg.Bind(keybindSection, "Zoom Out", "None|F7|-29|-10",
+            "Zoom the camera out (non-freecam). Default keyboard F7, gamepad RS+DLeft."));
+        ZoomInBind = new Keybind(cfg.Bind(keybindSection, "Zoom In", "None|F8|-29|-11",
+            "Zoom the camera in (non-freecam). Default keyboard F8, gamepad RS+DRight."));
     }
 
     /// Returns true when the given monster type index should be drawn.
