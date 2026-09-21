@@ -184,8 +184,8 @@ public static class CameraPatch
             if (KSingle(ks, monsterKeys[i]))
                 global.ShowMonsterType[i].Value = !global.ShowMonsterType[i].Value;
 
-        // Controller analog / freecam controls. Discrete toggle combos (freecam, HUD, zoom)
-        // are handled by the rebindable binds above and are not duplicated here.
+        // Controller analog / freecam controls.
+        // Discrete toggle combos (freecam, HUD, zoom) are handled by the rebindable binds above and are not duplicated here.
         if (playerIdx < 0 || !gp.IsConnected) return;
 
         var rscPressed = gp.Buttons.RightStick == ButtonState.Pressed;
@@ -274,6 +274,11 @@ public static class CameraPatch
     {
         var global = SaS2DevTools.Instance?.Global;
         if (global == null) return true;
+
+        // Menu previews (character creator, save list, continue menu, bestiary) are characters that were never spawned: PlayerSave.InitChar/LevelCharacterCreator/LevelBestiary all build them with exists = false.
+        // They are not world entities, so the per-type visibility filters must not touch them or hiding e.g. NPCs would blank out the menu character preview.
+        if (!c.exists)
+            return c.playerIdx < 0 || global.ShowPlayer.Value;
 
         // Local player character?
         if (c.playerIdx >= 0 && PlayerMgr.player != null && c.playerIdx < PlayerMgr.player.Length &&
