@@ -520,6 +520,9 @@ public class LevelDevMenu : LevelBase
             top.Append(useKeyboard ? "  |  \u02efBksp\u02f0 Reset" : "  |  \u02ef[x]\u02f0 Reset");
         if (selectedKeybind)
             top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
+        // Middle mouse toggles Fast stepping, which controller players have no button for.
+        if (useKeyboard)
+            top.Append($"  |  \u02ef[mmb]\u02f0 Fast: {(_fast ? "On" : "Off")}");
         Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
 
         // Line 2: back / tab (kept on their own line so the bar does not get too wide).
@@ -617,6 +620,8 @@ public class LevelDevMenu : LevelBase
     // during the previous Draw(). Mirrors vanilla CheckMouseHover: hover only re-selects while the
     // cursor is moving, so it never fights keyboard/controller nav at rest. Returns true when a
     // discrete action (tab/value click or scroll) was performed.
+    // Unlike vanilla queueClick, the MouseMgr click and wheel flags stay latched until EndDraw, which runs once per rendered frame while this handler runs once per Update.
+    // They are therefore consumed here as soon as an action is taken, so one press or one wheel notch performs exactly one action no matter how many Updates a frame runs.
     private bool HandleMouseInput()
     {
         if (player.ID != 0 || !MouseMgr.isActive) return false;
@@ -626,14 +631,25 @@ public class LevelDevMenu : LevelBase
         var leftClick = clickActive && MouseMgr.isLeftClick;
         var rightClick = clickActive && MouseMgr.isRightClick;
 
-        // Scroll wheel moves the selection, like up/down.
+        // Scroll wheel moves the selection, like up/down. The wheel latch is consumed before moving so one notch steps once.
         if ((MouseMgr.isScrollUp || MouseMgr.isScrollDown) && _displayedConfigs.Count > 0)
         {
             var dir = MouseMgr.isScrollUp ? -1 : 1;
+            MouseMgr.isScrollUp = false;
+            MouseMgr.isScrollDown = false;
             _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
             _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
+            return true;
+        }
+
+        // Middle click toggles Fast stepping from anywhere in the menu, the mouse equivalent of Accept on non-bool rows.
+        if (clickActive && MouseMgr.isMiddleClick)
+        {
+            MouseMgr.isMiddleClick = false;
+            _fast = !_fast;
+            PlaySelect();
             return true;
         }
 
@@ -645,7 +661,7 @@ public class LevelDevMenu : LevelBase
             for (var t = 0; t < _tabHitRects.Length && t < _tabs.Count; t++)
             {
                 if (!PointInRect(mouse, _tabHitRects[t])) continue;
-                player.menu.mouseInRect = true;
+                ConsumeClick(leftClick, rightClick);
                 if (t != _currentTabIndex)
                 {
                     _currentTabIndex = t;
@@ -667,8 +683,6 @@ public class LevelDevMenu : LevelBase
             // Resting cursor over the list: do nothing, let keyboard/controller drive.
             if (!moved && !leftClick && !rightClick) return false;
 
-            player.menu.mouseInRect = true;
-
             // Moving the cursor selects the row underneath it.
             if (moved && hit.Index != _selectedIndex)
             {
@@ -678,6 +692,9 @@ public class LevelDevMenu : LevelBase
             }
 
             if (!leftClick && !rightClick) return false; // hover only, no value change
+
+            // Any click from here on is acted upon, so consume the latched press: one press is one action.
+            ConsumeClick(leftClick, rightClick);
 
             if (hit.Index != _selectedIndex)
             {
@@ -712,12 +729,23 @@ public class LevelDevMenu : LevelBase
                 return true;
             }
 
-            // Colour picker: when a component is active (entered via Accept), click nudges it;
-            // otherwise left = increase, right = decrease.
-            if (IsColorString(config) && _colorCompIndex != -1)
-                ModifyColorComponent(config, _colorCompIndex, leftClick);
+            // Color picker: a left click enters component mode (R, G, B, A, Off) like Accept while no component is active;
+            // once a component is active, clicks nudge it up or down. Other value types behave as a normal value change.
+            if (IsColorString(config))
+            {
+                if (_colorCompIndex == -1)
+                {
+                    if (leftClick) _colorCompIndex = 0;
+                }
+                else
+                {
+                    ModifyColorComponent(config, _colorCompIndex, leftClick);
+                }
+            }
             else
+            {
                 ModifyValue(config, leftClick, _fast);
+            }
 
             SaS2DevTools.Instance.Config.Save();
             PlaySelect();
@@ -729,6 +757,14 @@ public class LevelDevMenu : LevelBase
 
     private static bool PointInRect(Vector2 p, Rectangle r) =>
         p.X > r.X && p.X < r.Right && p.Y > r.Y && p.Y < r.Bottom;
+
+    // Consumes the latched click flags so a single physical press is acted on once, even when a frame runs several Updates.
+    // MouseMgr only clears them in EndDraw, which happens once per rendered frame, while the mouse is handled here in Update.
+    private static void ConsumeClick(bool left, bool right)
+    {
+        if (left) MouseMgr.isLeftClick = false;
+        if (right) MouseMgr.isRightClick = false;
+    }
 
     // The gamepad assigned to this menu's player (falls back to pad 0 for keyboard players),
     // used when capturing controller combos.
