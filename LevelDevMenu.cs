@@ -38,10 +38,16 @@ public class LevelDevMenu : LevelBase
     // UI Constants
     private const float TabBarHeight = 36f; // height of one tab row
     private const float TabPadX = 18f; // horizontal text padding inside each tab
+    private const float TabGap = 2f; // horizontal gap between tabs
     private const float ItemHeight = 40f;
     private const float SectionHeight = 60f;
+    private const float SectionGap = 20f; // extra space between two section groups
     private const float TopMargin = 40f; // space above the tab bar
-    private const float BottomMargin = 40f; // space below the last item=
+    private const float BottomMargin = 40f; // space kept clear under the last item, above the control tips
+
+    // The control tips keep the screen position they had before the box was made taller to cover tips
+    private const float OldBoxHeightFactor = 0.7f;
+    private const float TipsOffsetY = 25f;
 
     private float _listX;
     private float _listY;
@@ -68,6 +74,7 @@ public class LevelDevMenu : LevelBase
 
     // Dynamic sizing
     private float _currentListVisibleHeight;
+    private float _currentScale = 1f;
 
     // 10 = LevelGameMenu, 25 = LevelMainMenu
     public LevelDevMenu(Player player, int returnToScreen = 10)
@@ -165,8 +172,26 @@ public class LevelDevMenu : LevelBase
 
         if (player.keys.keyUp || player.keys.keyDown)
         {
-            var dir = player.keys.keyUp ? -1 : 1;
-            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            var up = player.keys.keyUp;
+            if (up)
+            {
+                if (_selectedIndex > 0)
+                    _selectedIndex--;
+                else if (SaS2DevTools.WrapUp.Value)
+                    _selectedIndex = _displayedConfigs.Count - 1;
+                else
+                    return;
+            }
+            else
+            {
+                if (_selectedIndex < _displayedConfigs.Count - 1)
+                    _selectedIndex++;
+                else if (SaS2DevTools.WrapDown.Value)
+                    _selectedIndex = 0;
+                else
+                    return;
+            }
+
             _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
@@ -234,7 +259,6 @@ public class LevelDevMenu : LevelBase
         else if (player.keys.keyAccept && !isColor && !config.IsAction && !isKeybind)
         {
             _fast = !_fast;
-            PlaySelect();
         }
 
         if (valueChanged)
@@ -339,28 +363,28 @@ public class LevelDevMenu : LevelBase
 
     /// Calculates tab rows that fit inside boxWidth, and returns total height used.
     /// Also draws the tabs if draw == true.
-    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw)
+    private float LayoutAndDrawTabs(float boxX, float boxY, float boxWidth, bool draw, float scale = 1f)
     {
         if (!HasTabs) return 0f;
 
-        var tabY = boxY + 6f;
-        var tabH = TabBarHeight - 6f;
+        var tabY = boxY + 6f * scale;
+        var tabH = (TabBarHeight - 6f) * scale;
 
         // Pre-measure each tab width
         var tabWidths = new float[_tabs.Count];
         for (var t = 0; t < _tabs.Count; t++)
-            tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f, player, 1) + TabPadX * 2f;
+            tabWidths[t] = Text.GetStringSpace(new StringBuilder(_tabs[t]), 0.65f * scale, player, 1) +
+                           TabPadX * 2f * scale;
 
         // Build rows
         var rows = new List<List<int>>(); // list of tab indices per row
         var currentRow = new List<int>();
         var currentRowWidth = 0f;
-        const float tabGap = 2f;
 
         for (var t = 0; t < _tabs.Count; t++)
         {
             var w = tabWidths[t];
-            if (currentRow.Count > 0 && currentRowWidth + w + tabGap > boxWidth)
+            if (currentRow.Count > 0 && currentRowWidth + w + TabGap * scale > boxWidth)
             {
                 rows.Add(currentRow);
                 currentRow = [];
@@ -368,12 +392,12 @@ public class LevelDevMenu : LevelBase
             }
 
             currentRow.Add(t);
-            currentRowWidth += w + (currentRow.Count > 1 ? tabGap : 0f);
+            currentRowWidth += w + (currentRow.Count > 1 ? TabGap * scale : 0f);
         }
 
         if (currentRow.Count > 0) rows.Add(currentRow);
 
-        var totalTabHeight = rows.Count * TabBarHeight;
+        var totalTabHeight = rows.Count * TabBarHeight * scale;
 
         if (!draw) return totalTabHeight;
 
@@ -385,10 +409,10 @@ public class LevelDevMenu : LevelBase
         for (var r = 0; r < rows.Count; r++)
         {
             var rowIndices = rows[r];
-            var rowTotalWidth = rowIndices.Sum(idx => tabWidths[idx]) + (rowIndices.Count - 1) * tabGap;
+            var rowTotalWidth = rowIndices.Sum(idx => tabWidths[idx]) + (rowIndices.Count - 1) * TabGap * scale;
             var startX = boxX + (boxWidth - rowTotalWidth) / 2f;
             var curX = startX;
-            var rowY = tabY + r * TabBarHeight;
+            var rowY = tabY + r * TabBarHeight * scale;
 
             foreach (var idx in rowIndices)
             {
@@ -401,17 +425,17 @@ public class LevelDevMenu : LevelBase
                     UIRender.DrawRect(rect, 0.35f, 3, 1f, 1f, UIRender.interfaceTex);
                     Text.DrawText(new StringBuilder(_tabs[idx]),
                         new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
-                        Color.Yellow, 0.65f, 1);
+                        Color.Yellow, 0.65f * scale, 1);
                 }
                 else
                 {
                     UIRender.DrawRect(rect, 0.15f, 0, 1f, 1f, UIRender.interfaceTex);
                     Text.DrawText(new StringBuilder(_tabs[idx]),
                         new Vector2(curX + tw / 2f, rowY + tabH * 0.72f),
-                        new Color(0.7f, 0.7f, 0.7f, 1f), 0.65f, 1);
+                        new Color(0.7f, 0.7f, 0.7f, 1f), 0.65f * scale, 1);
                 }
 
-                curX += tw + tabGap;
+                curX += tw + TabGap * scale;
             }
         }
 
@@ -422,29 +446,37 @@ public class LevelDevMenu : LevelBase
     {
         base.Draw();
         var vp = Game1.Instance.GraphicsDevice.Viewport;
-        var boxWidth = vp.Width * 0.5f;
-        var boxHeight = vp.Height * 0.8f;
+        var scale = Math.Max(0.5f, Math.Min(2f, SaS2DevTools.MenuScale.Value));
+        _currentScale = scale;
+        var boxWidth = vp.Width * 0.5f * scale;
+        var boxHeight = vp.Height * 0.9f * scale;
 
         // Always assume local coop; menu takes place in respective player's side
         var margin = boxWidth * 0.025f;
         var isMainPlayer = player.ID == GameSessionMgr.gameSession.mainPlayerIdx;
         var boxX = isMainPlayer ? 0f - margin : vp.Width * 0.5f + margin;
+        const float boxYOffset = 30f; // To cover the tips
         var boxY = (vp.Height - boxHeight) / 2f;
+        boxY += boxYOffset * 1.5f; // For full tips coverage
 
         UIRender.DrawRect(new Rectangle((int)boxX, (int)boxY, (int)boxWidth, (int)boxHeight), 0.85f, 0, 1f, 1f,
             UIRender.interfaceTex);
 
         // Draw tabs
-        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true);
+        var usedTabHeight = LayoutAndDrawTabs(boxX, boxY, boxWidth, true, scale);
 
-        // Config list area
-        _listX = boxX + 40f;
-        _listY = boxY + TopMargin + usedTabHeight;
-        _listWidth = boxWidth - 80f;
-        var listVisibleHeight = boxHeight - TopMargin - usedTabHeight - BottomMargin;
+        // Where the tips start.
+        var tipsY = vp.Height * (1f + OldBoxHeightFactor * scale) * 0.5f + TipsOffsetY * scale;
+
+        // Config list area. A partly scrolled row can hang below the visible height by up to one item height, so that much is reserved on top of the bottom margin to keep every row clear of the tips.
+        _listX = boxX + 40f * scale;
+        _listY = boxY + TopMargin * scale + usedTabHeight;
+        _listWidth = boxWidth - 80f * scale;
+        var listVisibleHeight = Math.Max(0f, tipsY - (ItemHeight + BottomMargin) * scale - _listY);
         _currentListVisibleHeight = listVisibleHeight;
 
         var currentY = _listY - _scrollOffset;
+        var itemHeight = ItemHeight * scale;
 
         // Rebuild the item hit-test table each frame for mouse hover/click.
         _itemHitRects.Clear();
@@ -458,54 +490,56 @@ public class LevelDevMenu : LevelBase
             // Section header (only when there are no tabs)
             if (!HasTabs && cfg.ModName != lastMod)
             {
-                if (lastMod != null) currentY += 20f;
-                if (currentY + SectionHeight > _listY && currentY < _listY + listVisibleHeight)
+                if (lastMod != null) currentY += SectionGap * scale;
+                if (currentY + SectionHeight * scale > _listY && currentY < _listY + listVisibleHeight)
                 {
-                    Text.DrawText(new StringBuilder(cfg.ModName), new Vector2(_listX, currentY + 35f),
-                        new Color(0.6f, 0.8f, 1f, 1f), 0.85f, 0);
-                    UIRender.DrawDivider(new Vector2(_listX + _listWidth / 2f, currentY + 45f), 0.7f, 1f, 1f, 0.7f,
-                        0.5f, 1, UIRender.interfaceTex);
+                    Text.DrawText(new StringBuilder(cfg.ModName), new Vector2(_listX, currentY + 35f * scale),
+                        new Color(0.6f, 0.8f, 1f, 1f), 0.85f * scale, 0);
+                    UIRender.DrawDivider(new Vector2(_listX + _listWidth / 2f, currentY + 45f * scale), 0.7f * scale,
+                        1f, 1f, 0.7f, 0.5f, 1, UIRender.interfaceTex);
                 }
 
-                currentY += SectionHeight;
+                currentY += SectionHeight * scale;
                 lastMod = cfg.ModName;
             }
 
             // Config row
-            if (currentY + ItemHeight > _listY && currentY < _listY + listVisibleHeight)
+            if (currentY + itemHeight > _listY && currentY < _listY + listVisibleHeight)
             {
                 _itemHitRects.Add(new ItemHit
                 {
                     Index = i,
-                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight)
+                    Rect = new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)itemHeight)
                 });
 
                 if (selected)
-                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)ItemHeight), 0.2f,
+                    UIRender.DrawRect(new Rectangle((int)_listX, (int)currentY, (int)_listWidth, (int)itemHeight), 0.2f,
                         3, 1f, 1f, UIRender.interfaceTex);
 
                 var textColor = selected ? Color.Yellow : Color.White;
-                var textY = currentY + ItemHeight * 0.75f;
+                var textY = currentY + itemHeight * 0.75f;
 
-                Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10, textY), textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(cfg.DisplayName), new Vector2(_listX + 10f * scale, textY), textColor,
+                    0.7f * scale, 0);
 
                 var valStr = FormatValue(cfg, selected);
-                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth, textY),
-                    textColor, 0.7f, 0);
+                Text.DrawText(new StringBuilder(valStr), new Vector2(_listX + _listWidth - ValueWidth * scale, textY),
+                    textColor, 0.7f * scale, 0);
             }
 
-            currentY += ItemHeight;
+            currentY += itemHeight;
         }
 
-        DrawHelpBar(boxX, boxWidth, vp.Height);
+        DrawHelpBar(boxX, boxWidth, tipsY, vp.Height, scale);
     }
 
-    private void DrawHelpBar(float boxX, float boxWidth, float vpHeight)
+    // Control tips plus the selected setting's description, drawn right under the tip bar.
+    private void DrawHelpBar(float boxX, float boxWidth, float tipsY, float vpHeight, float scale = 1f)
     {
         var useKeyboard = player.inputProfile.keyMouseEnable;
         var action = useKeyboard ? "[Space]" : "[a]";
-
         var centerX = boxX + boxWidth / 2f;
+
         var sel = _displayedConfigs is { Count: > 0 } && _selectedIndex >= 0 &&
                   _selectedIndex < _displayedConfigs.Count
             ? _displayedConfigs[_selectedIndex]
@@ -513,24 +547,107 @@ public class LevelDevMenu : LevelBase
         var selectedKeybind = sel is { IsKeybind: true };
         var selectedResettable = sel != null && (sel.IsKeybind || sel.HasDefault);
 
-        // Line 1: edit / change / reset (/ enable toggle for keybinds).
+        // Fast stepping only applies to numeric options (Accept toggles it).
+        var selectedSteppable = sel?.SettingType == typeof(float) || sel?.SettingType == typeof(int) ||
+                                sel?.SettingType == typeof(long);
+
+        // Line 1: edit / change / reset (/ enable toggle for keybinds, / fast stepping for numbers).
         var top = new StringBuilder();
         top.Append($"\u02ef{action}\u02f0 Cycle/Edit  |  \u02ef[ll]/[lr]\u02f0 Change");
         if (selectedResettable)
             top.Append(useKeyboard ? "  |  \u02efBksp\u02f0 Reset" : "  |  \u02ef[x]\u02f0 Reset");
         if (selectedKeybind)
             top.Append(useKeyboard ? "  |  \u02efTab\u02f0 On/Off" : "  |  \u02ef[y]\u02f0 On/Off");
-        // Middle mouse toggles Fast stepping, which controller players have no button for.
-        if (useKeyboard)
-            top.Append($"  |  \u02ef[mmb]\u02f0 Fast: {(_fast ? "On" : "Off")}");
-        Text.DrawText(top, new Vector2(centerX, vpHeight - 62), Color.White, 0.6f, 1, player, 1);
+        else if (selectedSteppable)
+        {
+            // Fast stepping also has a middle mouse toggle, which controller players do not have.
+            var fastKeys = useKeyboard ? $"\u02ef{action}\u02f0/\u02ef[mmb]\u02f0" : $"\u02ef{action}\u02f0";
+            top.Append($"  |  {fastKeys} Fast: {(_fast ? "On" : "Off")}");
+        }
+
+        Text.DrawText(top, new Vector2(centerX, tipsY), Color.White, 0.6f * scale, 1, player, 1);
 
         // Line 2: back / tab (kept on their own line so the bar does not get too wide).
         var bottom = new StringBuilder();
         bottom.Append("\u02ef[b]\u02f0 Back");
-        if (HasTabs) bottom.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lt]/[rt]\u02f0 Tab");
-        Text.DrawText(bottom, new Vector2(centerX, vpHeight - 38), Color.White, 0.6f, 1, player, 1);
+        if (HasTabs) bottom.Append(useKeyboard ? "  |  \u02ef[Z]/[X]\u02f0 Tab" : "  |  \u02ef[lb]/[rb]\u02f0 Tab");
+
+        var line2Y = tipsY + 30f * scale;
+        Text.DrawText(bottom, new Vector2(centerX, line2Y), Color.White, 0.6f * scale, 1, player, 1);
+
+        DrawSelectedDescription(boxX, boxWidth, line2Y + 30f * scale, vpHeight, scale);
     }
+
+    // Draws what the currently selected setting does (its config description), word-wrapped to the menu width.
+    private void DrawSelectedDescription(float boxX, float boxWidth, float startY, float vpHeight, float scale)
+    {
+        if (_displayedConfigs is not { Count: > 0 } || _selectedIndex < 0 || _selectedIndex >= _displayedConfigs.Count)
+            return;
+
+        var desc = GetActiveEntry(_displayedConfigs[_selectedIndex]).Description;
+        if (string.IsNullOrEmpty(desc)) return;
+
+        var size = 0.55f * scale;
+        var color = new Color(0.75f, 0.75f, 0.75f, 1f);
+        var centerX = boxX + boxWidth / 2f;
+        var y = startY;
+        // Stop once the lines would run off the bottom of the screen.
+        foreach (var line in WrapText(desc, size, boxWidth - 80f * scale).TakeWhile(_ => !(y > vpHeight - 10f * scale)))
+        {
+            Text.DrawText(new StringBuilder(line), new Vector2(centerX, y), color, size, 1, player, 1);
+            y += size * 40f;
+        }
+    }
+
+    // Word-wraps text into lines that fit maxWidth, measured with the game's own font metrics.
+    private List<string> WrapText(string txt, float size, float maxWidth)
+    {
+        var lines = new List<string>();
+        foreach (var rawLine in txt.Replace("\r\n", "\n").Split('\n'))
+        {
+            var current = "";
+            foreach (var word in rawLine.Split([' '], StringSplitOptions.RemoveEmptyEntries))
+            {
+                // A single word wider than a whole line is hard-split so nothing overflows.
+                if (current.Length == 0 && MeasureText(word, size) > maxWidth)
+                {
+                    var chunk = "";
+                    foreach (var ch in word)
+                    {
+                        if (chunk.Length > 0 && MeasureText(chunk + ch, size) > maxWidth)
+                        {
+                            lines.Add(chunk);
+                            chunk = "";
+                        }
+
+                        chunk += ch;
+                    }
+
+                    current = chunk;
+                    continue;
+                }
+
+                var candidate = current.Length == 0 ? word : current + " " + word;
+                if (current.Length > 0 && MeasureText(candidate, size) > maxWidth)
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+                else
+                {
+                    current = candidate;
+                }
+            }
+
+            lines.Add(current);
+        }
+
+        return lines;
+    }
+
+    // Width of a string as DrawText renders it at the same size (DrawText scales glyphs by 0.8 internally).
+    private float MeasureText(string txt, float size) =>
+        Text.GetStringSpace(new StringBuilder(txt), size * 0.8f, player, 1);
 
     private string FormatValue(DevConfigEntry config, bool selected)
     {
@@ -554,7 +671,10 @@ public class LevelDevMenu : LevelBase
         if (config.SettingType == typeof(bool)) return config.BoolValue ? "On" : "Off";
 
         // Float
-        if (config.SettingType == typeof(float)) return config.FloatValue.ToString("F2");
+        if (config.SettingType == typeof(float))
+            return config.IsPercent
+                ? $"{Math.Round(config.FloatValue * 100f)}%"
+                : config.FloatValue.ToString("F2");
 
         // String with acceptable-values list: show "Value (N/Total)"
         if (config.SettingType == typeof(string) &&
@@ -575,6 +695,7 @@ public class LevelDevMenu : LevelBase
     {
         float y = 0;
         string last = null;
+        var scale = _currentScale;
 
         if (!HasTabs)
         {
@@ -582,16 +703,16 @@ public class LevelDevMenu : LevelBase
             {
                 if (_displayedConfigs[i].ModName != last)
                 {
-                    y += last == null ? SectionHeight : SectionHeight + 20f;
+                    y += last == null ? SectionHeight * scale : (SectionHeight + SectionGap) * scale;
                     last = _displayedConfigs[i].ModName;
                 }
 
-                if (i < index) y += ItemHeight;
+                if (i < index) y += ItemHeight * scale;
             }
         }
         else
         {
-            y = index * ItemHeight;
+            y = index * ItemHeight * scale;
         }
 
         return y;
@@ -602,7 +723,7 @@ public class LevelDevMenu : LevelBase
         if (_displayedConfigs.Count == 0) return;
 
         var itemTop = GetItemY(_selectedIndex);
-        var itemBottom = itemTop + ItemHeight;
+        var itemBottom = itemTop + ItemHeight * _currentScale;
 
         // Use the visible area that was computed during the last Draw()
         var visibleTop = _scrollOffset;
@@ -634,10 +755,28 @@ public class LevelDevMenu : LevelBase
         // Scroll wheel moves the selection, like up/down. The wheel latch is consumed before moving so one notch steps once.
         if ((MouseMgr.isScrollUp || MouseMgr.isScrollDown) && _displayedConfigs.Count > 0)
         {
-            var dir = MouseMgr.isScrollUp ? -1 : 1;
+            var up = MouseMgr.isScrollUp;
             MouseMgr.isScrollUp = false;
             MouseMgr.isScrollDown = false;
-            _selectedIndex = (_selectedIndex + dir + _displayedConfigs.Count) % _displayedConfigs.Count;
+            if (up)
+            {
+                if (_selectedIndex > 0)
+                    _selectedIndex--;
+                else if (SaS2DevTools.WrapUp.Value)
+                    _selectedIndex = _displayedConfigs.Count - 1;
+                else
+                    return true;
+            }
+            else
+            {
+                if (_selectedIndex < _displayedConfigs.Count - 1)
+                    _selectedIndex++;
+                else if (SaS2DevTools.WrapDown.Value)
+                    _selectedIndex = 0;
+                else
+                    return true;
+            }
+
             _colorCompIndex = -1;
             PlaySelect();
             EnsureVisible();
@@ -676,19 +815,19 @@ public class LevelDevMenu : LevelBase
         if (_displayedConfigs.Count == 0) return false;
 
         // Item hover / click.
-        foreach (var hit in _itemHitRects)
+        foreach (var hit in _itemHitRects.Where(hit => PointInRect(mouse, hit.Rect)))
         {
-            if (!PointInRect(mouse, hit.Rect)) continue;
-
-            // Resting cursor over the list: do nothing, let keyboard/controller drive.
-            if (!moved && !leftClick && !rightClick) return false;
-
-            // Moving the cursor selects the row underneath it.
-            if (moved && hit.Index != _selectedIndex)
+            switch (moved)
             {
-                _selectedIndex = hit.Index;
-                _colorCompIndex = -1;
-                PlaySelect();
+                // Resting cursor over the list: do nothing, let keyboard/controller drive.
+                case false when !leftClick && !rightClick:
+                    return false;
+                // Moving the cursor selects the row underneath it.
+                case true when hit.Index != _selectedIndex:
+                    _selectedIndex = hit.Index;
+                    _colorCompIndex = -1;
+                    PlaySelect();
+                    break;
             }
 
             if (!leftClick && !rightClick) return false; // hover only, no value change
@@ -696,6 +835,7 @@ public class LevelDevMenu : LevelBase
             // Any click from here on is acted upon, so consume the latched press: one press is one action.
             ConsumeClick(leftClick, rightClick);
 
+            // A click acts on the clicked row: left = increase, right = decrease.
             if (hit.Index != _selectedIndex)
             {
                 _selectedIndex = hit.Index;
@@ -790,6 +930,7 @@ public class LevelDevMenu : LevelBase
         if (!config.HasDefault) return;
         config.BoxedValue = config.DefaultValue;
         SaS2DevTools.Instance.Config.Save();
+        _colorCompIndex = -1;
     }
 
     // Enter keybind capture mode. Inputs held right now (e.g. the Accept key/button) are ignored
@@ -845,42 +986,84 @@ public class LevelDevMenu : LevelBase
         string cat;
         var order = 0;
         // TOGGLES
-        AddBool(list, cat = "Toggles", "Godmode", () => cheats.Godmode.Value, v => cheats.Godmode.Value = v, order: order += 1, defaultValue: cheats.Godmode.DefaultValue);
-        AddBool(list, cat, "Invulnerable", () => cheats.Invulnerable.Value, v => cheats.Invulnerable.Value = v, order: order += 1, defaultValue: cheats.Invulnerable.DefaultValue);
-        AddBool(list, cat, "Infinite Stamina", () => cheats.InfStamina.Value, v => cheats.InfStamina.Value = v, order: order += 1, defaultValue: cheats.InfStamina.DefaultValue);
-        AddBool(list, cat, "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = v, order: order += 1, defaultValue: cheats.InfPoise.DefaultValue);
-        AddBool(list, cat, "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = v, order: order += 1, defaultValue: cheats.Unstaggerable.DefaultValue);
-        AddBool(list, cat, "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = v, order: order += 1, defaultValue: cheats.InfJumps.DefaultValue);
-        AddBool(list, cat, "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = v, order: order += 1, defaultValue: cheats.PlayJumpSnd.DefaultValue);
-        AddBool(list, cat, "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = v, order: order += 1, defaultValue: cheats.IncreaseJumps.DefaultValue);
-        AddInt(list, cat, "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = v, order: order += 1, defaultValue: cheats.ExtraJumps.DefaultValue);
-        AddBool(list, cat, "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = v, order: order += 1, defaultValue: cheats.NoFallDmg.DefaultValue);
-        AddBool(list, cat, "NoClip", () => cheats.NoClip.Value, v => cheats.NoClip.Value = v, order: order += 1, defaultValue: cheats.NoClip.DefaultValue);
-        AddFloat(list, cat, "NoClipSpeed", () => cheats.NoClipSpeed.Value, v => cheats.NoClipSpeed.Value = v, order: order += 1, defaultValue: cheats.NoClipSpeed.DefaultValue);
+        AddBool(list, cat = "Toggles", "Godmode", () => cheats.Godmode.Value, v => cheats.Godmode.Value = v,
+            order: order += 1, defaultValue: cheats.Godmode.DefaultValue,
+            description: cheats.Godmode.Description.Description);
+        AddBool(list, cat, "Invulnerable", () => cheats.Invulnerable.Value, v => cheats.Invulnerable.Value = v,
+            order: order += 1, defaultValue: cheats.Invulnerable.DefaultValue,
+            description: cheats.Invulnerable.Description.Description);
+        AddBool(list, cat, "Infinite Stamina", () => cheats.InfStamina.Value, v => cheats.InfStamina.Value = v,
+            order: order += 1, defaultValue: cheats.InfStamina.DefaultValue,
+            description: cheats.InfStamina.Description.Description);
+        AddBool(list, cat, "Infinite Poise", () => cheats.InfPoise.Value, v => cheats.InfPoise.Value = v,
+            order: order += 1, defaultValue: cheats.InfPoise.DefaultValue,
+            description: cheats.InfPoise.Description.Description);
+        AddBool(list, cat, "Unstaggerable", () => cheats.Unstaggerable.Value, v => cheats.Unstaggerable.Value = v,
+            order: order += 1, defaultValue: cheats.Unstaggerable.DefaultValue,
+            description: cheats.Unstaggerable.Description.Description);
+        AddBool(list, cat, "Infinite Jumps", () => cheats.InfJumps.Value, v => cheats.InfJumps.Value = v,
+            order: order += 1, defaultValue: cheats.InfJumps.DefaultValue,
+            description: cheats.InfJumps.Description.Description);
+        AddBool(list, cat, "Play Jump Sound", () => cheats.PlayJumpSnd.Value, v => cheats.PlayJumpSnd.Value = v,
+            order: order += 1, defaultValue: cheats.PlayJumpSnd.DefaultValue,
+            description: cheats.PlayJumpSnd.Description.Description);
+        AddBool(list, cat, "Increase Jump Amount", () => cheats.IncreaseJumps.Value, v => cheats.IncreaseJumps.Value = v,
+            order: order += 1, defaultValue: cheats.IncreaseJumps.DefaultValue,
+            description: cheats.IncreaseJumps.Description.Description);
+        AddInt(list, cat, "Extra Jump Amount", () => cheats.ExtraJumps.Value, v => cheats.ExtraJumps.Value = v,
+            order: order += 1, defaultValue: cheats.ExtraJumps.DefaultValue,
+            description: cheats.ExtraJumps.Description.Description);
+        AddBool(list, cat, "No Fall Damage", () => cheats.NoFallDmg.Value, v => cheats.NoFallDmg.Value = v,
+            order: order += 1, defaultValue: cheats.NoFallDmg.DefaultValue,
+            description: cheats.NoFallDmg.Description.Description);
+        AddBool(list, cat, "NoClip", () => cheats.NoClip.Value, v => cheats.NoClip.Value = v, order: order += 1,
+            defaultValue: cheats.NoClip.DefaultValue, description: cheats.NoClip.Description.Description);
+        AddFloat(list, cat, "NoClipSpeed", () => cheats.NoClipSpeed.Value, v => cheats.NoClipSpeed.Value = v,
+            order: order += 1, defaultValue: cheats.NoClipSpeed.DefaultValue,
+            description: cheats.NoClipSpeed.Description.Description);
 
         // STATS & ACTIONS (live values / actions - no resettable default)
-        AddLong(list, cat = "Stats and Actions", "Silver", () => player.stats.silver, v => player.stats.silver = v, order: order += 1);
-        AddLong(list, cat, "XP", () => player.stats.xp, v => player.stats.xp = v, order: order += 1);
-        AddAction(list, cat, "Teleport to Mage", TeleportToMageArena, order += 1);
+        AddLong(list, cat = "Stats and Actions", "Silver", () => player.stats.silver, v => player.stats.silver = v,
+            order: order += 1, description: "Silver held by this player.");
+        AddLong(list, cat, "XP", () => player.stats.xp, v => player.stats.xp = v, order: order += 1,
+            description: "Experience points of this player.");
+        AddAction(list, cat, "Teleport to Mage", TeleportToMageArena, order += 1,
+            "Teleports this player to the first living mage on the map.");
         AddAction(list, cat, "Refill Health/Stam", () =>
         {
             var c = (Character)AccessTools.Method(typeof(Player), "GetCharacter").Invoke(player, null);
             if (c == null) return;
             c.hp = 9999f;
             c.stamina = 9999f;
-        }, order += 1);
+        }, order += 1, "Refills health and stamina of this player to 9999.");
 
         // CAMERA (CamSpeed/CamZoom are runtime values - reset via "Save defaults" action instead)
-        AddBool(list, cat = "Camera", "Block Input in Freecam", () => global.BlockInputInFreecam.Value, v => global.BlockInputInFreecam.Value = v, order: order += 1, defaultValue: global.BlockInputInFreecam.DefaultValue);
-        AddFloat(list, cat, "Camera Speed (pixels/tick)", () => global.CamSpeed, v => global.CamSpeed = v, order: order += 1);
-        AddFloat(list, cat, "Camera Zoom", () => global.CamZoom, v => global.CamZoom = v, order: order += 1);
-        AddFloat(list, cat, "Camera Zoom Multiplier (Non-freecam)", () => global.CamZoomNonFreecam.Value, v => global.CamZoomNonFreecam.Value = v, order: order += 1, defaultValue: global.CamZoomNonFreecam.DefaultValue);
-        AddAction(list, cat, "Save current speed/zoom as defaults", global.SaveDefaults, order += 1);
+        AddBool(list, cat = "Camera", "Block Input in Freecam", () => global.BlockInputInFreecam.Value,
+            v => global.BlockInputInFreecam.Value = v, order: order += 1,
+            defaultValue: global.BlockInputInFreecam.DefaultValue,
+            description: global.BlockInputInFreecam.Description.Description);
+        AddFloat(list, cat, "Camera Speed (pixels/tick)", () => global.CamSpeed, v => global.CamSpeed = v,
+            order: order += 1,
+            description: "Free-cam panning speed in pixels per tick. Saved as the startup default by the action below.");
+        AddFloat(list, cat, "Camera Zoom", () => global.CamZoom, v => global.CamZoom = v, order: order += 1,
+            description: "Free-cam zoom level. Saved as the startup default by the action below.");
+        AddFloat(list, cat, "Camera Zoom Multiplier (Non-freecam)", () => global.CamZoomNonFreecam.Value,
+            v => global.CamZoomNonFreecam.Value = v, order: order += 1,
+            defaultValue: global.CamZoomNonFreecam.DefaultValue,
+            description: "Camera zoom multiplier used outside free-cam (100% = default).", isPercent: true);
+        AddAction(list, cat, "Save current speed/zoom as defaults", global.SaveDefaults, order += 1,
+            "Stores the current camera speed and zoom as the values restored on the next launch.");
 
         // VISIBILITY
-        AddBool(list, cat = "Visibility", "Show HUD", () => global.ShowHud.Value, v => global.ShowHud.Value = v, order: order += 1, defaultValue: global.ShowHud.DefaultValue);
-        AddBool(list, cat, "Show Debug HUD", () => global.ShowDebugHud.Value, v => global.ShowDebugHud.Value = v, order: order += 1, defaultValue: global.ShowDebugHud.DefaultValue);
-        AddBool(list, cat, "Show Player", () => global.ShowPlayer.Value, v => global.ShowPlayer.Value = v, order: order += 1, defaultValue: global.ShowPlayer.DefaultValue);
+        AddBool(list, cat = "Visibility", "Show HUD", () => global.ShowHud.Value, v => global.ShowHud.Value = v,
+            order: order += 1, defaultValue: global.ShowHud.DefaultValue,
+            description: global.ShowHud.Description.Description);
+        AddBool(list, cat, "Show Debug HUD", () => global.ShowDebugHud.Value, v => global.ShowDebugHud.Value = v,
+            order: order += 1, defaultValue: global.ShowDebugHud.DefaultValue,
+            description: global.ShowDebugHud.Description.Description);
+        AddBool(list, cat, "Show Player", () => global.ShowPlayer.Value, v => global.ShowPlayer.Value = v,
+            order: order += 1, defaultValue: global.ShowPlayer.DefaultValue,
+            description: global.ShowPlayer.Description.Description);
 
         // Per-monster visibility toggles
         for (var i = 0; i < GlobalSettings.MonsterTypeLabels.Length; i++)
@@ -890,46 +1073,62 @@ public class LevelDevMenu : LevelBase
             AddBool(list, cat, $"Show {label}",
                 () => global.ShowMonsterType[idx].Value,
                 v => global.ShowMonsterType[idx].Value = v, order: order += 1,
-                defaultValue: global.ShowMonsterType[idx].DefaultValue);
+                defaultValue: global.ShowMonsterType[idx].DefaultValue,
+                description: global.ShowMonsterType[idx].Description.Description);
         }
 
         // KEYBINDS (keyboard only; controller binds remain fixed)
-        AddKeybind(list, cat = "Keybinds", "Toggle Freecam", global.FreecamBind, order += 1);
-        AddKeybind(list, cat, "Toggle HUD", global.ToggleHudBind, order += 1);
-        AddKeybind(list, cat, "Zoom Out (non-freecam)", global.ZoomOutBind, order += 1);
-        AddKeybind(list, cat, "Zoom In (non-freecam)", global.ZoomInBind, order += 1);
+        AddKeybind(list, cat = "Keybinds", "Toggle Freecam", global.FreecamBind, order += 1,
+            global.FreecamBind.Config.Description.Description);
+        AddKeybind(list, cat, "Toggle HUD", global.ToggleHudBind, order += 1,
+            global.ToggleHudBind.Config.Description.Description);
+        AddKeybind(list, cat, "Zoom Out (non-freecam)", global.ZoomOutBind, order += 1,
+            global.ZoomOutBind.Config.Description.Description);
+        AddKeybind(list, cat, "Zoom In (non-freecam)", global.ZoomInBind, order += 1,
+            global.ZoomInBind.Config.Description.Description);
+
+        // MENU (the menu's own navigation and appearance options)
+        AddBool(list, cat = "Navigation", "Wrap Around When Going Down", () => SaS2DevTools.WrapDown.Value,
+            v => SaS2DevTools.WrapDown.Value = v, order: order += 1, defaultValue: SaS2DevTools.WrapDown.DefaultValue,
+            description: SaS2DevTools.WrapDown.Description.Description);
+        AddBool(list, cat, "Wrap Around When Going Up", () => SaS2DevTools.WrapUp.Value,
+            v => SaS2DevTools.WrapUp.Value = v, order: order += 1, defaultValue: SaS2DevTools.WrapUp.DefaultValue,
+            description: SaS2DevTools.WrapUp.Description.Description);
+        AddFloat(list, cat = "Appearance", "Menu Scale", () => SaS2DevTools.MenuScale.Value,
+            v => SaS2DevTools.MenuScale.Value = v, order: order += 1, defaultValue: SaS2DevTools.MenuScale.DefaultValue,
+            description: SaS2DevTools.MenuScale.Description.Description);
 
         return list;
     }
 
-    private static void AddBool(List<DevConfigEntry> list, string mod, string name, Func<bool> getter, Action<bool> setter, int order = 0, object defaultValue = null)
+    private static void AddBool(List<DevConfigEntry> list, string mod, string name, Func<bool> getter, Action<bool> setter, int order = 0, object defaultValue = null, string description = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(bool), getter, setter, order, defaultValue));
+        list.Add(new DevConfigEntry(mod, name, typeof(bool), getter, setter, order, defaultValue, description));
     }
 
-    private static void AddInt(List<DevConfigEntry> list, string mod, string name, Func<int> getter, Action<int> setter, int order = 0, object defaultValue = null)
+    private static void AddInt(List<DevConfigEntry> list, string mod, string name, Func<int> getter, Action<int> setter, int order = 0, object defaultValue = null, string description = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(int), getter, setter, order, defaultValue));
+        list.Add(new DevConfigEntry(mod, name, typeof(int), getter, setter, order, defaultValue, description));
     }
 
-    private static void AddFloat(List<DevConfigEntry> list, string mod, string name, Func<float> getter, Action<float> setter, int order = 0, object defaultValue = null)
+    private static void AddFloat(List<DevConfigEntry> list, string mod, string name, Func<float> getter, Action<float> setter, int order = 0, object defaultValue = null, string description = null, bool isPercent = false)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(float), getter, setter, order, defaultValue));
+        list.Add(new DevConfigEntry(mod, name, typeof(float), getter, setter, order, defaultValue, description, isPercent));
     }
 
-    private static void AddLong(List<DevConfigEntry> list, string mod, string name, Func<long> getter, Action<long> setter, int order = 0, object defaultValue = null)
+    private static void AddLong(List<DevConfigEntry> list, string mod, string name, Func<long> getter, Action<long> setter, int order = 0, object defaultValue = null, string description = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(long), getter, setter, order, defaultValue));
+        list.Add(new DevConfigEntry(mod, name, typeof(long), getter, setter, order, defaultValue, description));
     }
 
-    private static void AddAction(List<DevConfigEntry> list, string mod, string name, Action action, int order = 0)
+    private static void AddAction(List<DevConfigEntry> list, string mod, string name, Action action, int order = 0, string description = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, action, order));
+        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, action, order, null, null, description));
     }
 
-    private static void AddKeybind(List<DevConfigEntry> list, string mod, string name, Keybind keybind, int order = 0)
+    private static void AddKeybind(List<DevConfigEntry> list, string mod, string name, Keybind keybind, int order = 0, string description = null)
     {
-        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, null, order, keybind));
+        list.Add(new DevConfigEntry(mod, name, typeof(void), null, null, null, order, keybind, null, description));
     }
 
     private void TeleportToMageArena()
@@ -961,13 +1160,21 @@ public class LevelDevMenu : LevelBase
         Action action = null,
         int order = 0,
         Keybind keybind = null,
-        object defaultValue = null)
+        object defaultValue = null,
+        string description = null,
+        bool isPercent = false)
     {
         public readonly string ModName = mod;
         public readonly string DisplayName = name;
         public readonly int Order = order;
         public readonly Type SettingType = type;
         public readonly string[] AcceptableValues = null;
+
+        /// What this setting does, shown under the control tips while the row is selected.
+        public readonly string Description = description;
+
+        /// When true and the type is float, the value is shown as a percentage (1.0 = 100%).
+        public readonly bool IsPercent = isPercent;
 
         /// Non-null when this row is a rebindable key/button combo (see Keybind).
         public readonly Keybind Keybind = keybind;
@@ -980,20 +1187,21 @@ public class LevelDevMenu : LevelBase
         public bool HasDefault => DefaultValue != null;
 
         public DevConfigEntry(string mod, string name, Type type, Func<bool> getter, Action<bool> setter,
-                int order = 0, object defaultValue = null)
-            : this(mod, name, type, () => getter(), v => setter((bool)v), null, order, null, defaultValue) { }
+                int order = 0, object defaultValue = null, string description = null)
+            : this(mod, name, type, () => getter(), v => setter((bool)v), null, order, null, defaultValue, description) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<int> getter, Action<int> setter,
-                int order = 0, object defaultValue = null)
-            : this(mod, name, type, () => getter(), v => setter((int)v), null, order, null, defaultValue) { }
+                int order = 0, object defaultValue = null, string description = null)
+            : this(mod, name, type, () => getter(), v => setter((int)v), null, order, null, defaultValue, description) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<float> getter, Action<float> setter,
-                int order = 0, object defaultValue = null)
-            : this(mod, name, type, () => getter(), v => setter((float)v), null, order, null, defaultValue) { }
+                int order = 0, object defaultValue = null, string description = null, bool isPercent = false)
+            : this(mod, name, type, () => getter(), v => setter((float)v), null, order, null, defaultValue, description,
+                isPercent) { }
 
         public DevConfigEntry(string mod, string name, Type type, Func<long> getter, Action<long> setter,
-                int order = 0, object defaultValue = null)
-            : this(mod, name, type, () => getter(), v => setter((long)v), null, order, null, defaultValue) { }
+                int order = 0, object defaultValue = null, string description = null)
+            : this(mod, name, type, () => getter(), v => setter((long)v), null, order, null, defaultValue, description) { }
 
         public object BoxedValue
         {

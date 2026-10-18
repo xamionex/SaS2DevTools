@@ -1,6 +1,7 @@
 using System.IO;
 using System.Timers;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.NET.Common;
 using HarmonyLib;
 
@@ -11,6 +12,9 @@ namespace SaS2DevTools;
 public class SaS2DevTools : BasePlugin
 {
     internal static SaS2DevTools Instance;
+    internal static ConfigEntry<bool> WrapDown;
+    internal static ConfigEntry<bool> WrapUp;
+    internal static ConfigEntry<float> MenuScale;
     private Harmony _harmony;
     private FileSystemWatcher _configWatcher;
     private Timer _debounceTimer;
@@ -29,6 +33,13 @@ public class SaS2DevTools : BasePlugin
     public override void Load()
     {
         Instance = this;
+
+        WrapDown = Config.Bind("Navigation", "WrapDown", true,
+            "When on, pressing down on the last option wraps around to the top of the menu.");
+        WrapUp = Config.Bind("Navigation", "WrapUp", true,
+            "When on, pressing up on the first option wraps around to the bottom of the menu.");
+        MenuScale = Config.Bind("Appearance", "MenuScale", 1.0f,
+            "Scales the Dev Tools menu. 1.0 = default size.");
 
         Player1 = new PlayerCheats(Config, "Player 1");
         Player2 = new PlayerCheats(Config, "Player 2");
